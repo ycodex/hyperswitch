@@ -1,30 +1,48 @@
 use error_stack::{IntoReport, ResultExt};
 use serde::{Deserialize, Serialize};
+use storage_models::enums;
 use url::Url;
 
 use crate::{
     core::errors,
     pii, services,
     types::{
-        self, api,
-        storage::enums,
+        self,
+        api::{self, enums as api_enums},
+        storage::enums as storage_enums,
         transformers::{self, ForeignFrom},
     },
+    utils::OptionExt,
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CardSource {
     #[serde(rename = "type")]
-    pub source_type: Option<String>,
+    pub source_type: String,
     pub number: Option<pii::Secret<String, pii::CardNumber>>,
     pub expiry_month: Option<pii::Secret<String>>,
     pub expiry_year: Option<pii::Secret<String>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaypalSource {
+    #[serde(rename = "type")]
+    pub source_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenSource {
+    #[serde(rename = "type")]
+    pub source_type: String,
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Source {
     Card(CardSource),
+    Token(TokenSource),
+    Paypal(PaypalSource),
 }
 
 pub struct CheckoutAuthType {
@@ -108,12 +126,60 @@ impl TryFrom<&types::PaymentsAuthorizeRouterData> for PaymentsRequest {
             Some(enums::CaptureMethod::Automatic)
         );
 
-        let source_var = Source::Card(CardSource {
-            source_type: Some("card".to_owned()),
-            number: ccard.map(|x| x.card_number.clone()),
-            expiry_month: ccard.map(|x| x.card_exp_month.clone()),
-            expiry_year: ccard.map(|x| x.card_exp_year.clone()),
-        });
+        let wallet_data = match item.request.payment_method_data {
+            api::PaymentMethod::Wallet(ref wallet_data) => Some(wallet_data),
+            _ => None,
+        };
+
+        let source_type: String = match item.payment_method {
+            storage_enums::PaymentMethodType::Card => "card".to_string(),
+            storage_enums::PaymentMethodType::Wallet => wallet_data
+                .get_required_value("wallet_data")
+                .change_context(errors::ConnectorError::RequestEncodingFailed)?
+                .issuer_name
+                .to_string(),
+            _ => "None".to_string(), //throw error
+        };
+
+        let source_var = match item.payment_method {
+            storage_enums::PaymentMethodType::Card => {
+                let card = CardSource {
+                    source_type,
+                    number: ccard.map(|x| x.card_number.clone()),
+                    expiry_month: ccard.map(|x| x.card_exp_month.clone()),
+                    expiry_year: ccard.map(|x| x.card_exp_year.clone()),
+                };
+
+                Ok(Source::Card(card))
+            }
+            storage_enums::PaymentMethodType::Wallet => match wallet_data
+                .get_required_value("wallet_data")
+                .change_context(errors::ConnectorError::RequestEncodingFailed)?
+                .issuer_name
+            {
+                api_enums::WalletIssuer::GooglePay | api_enums::WalletIssuer::ApplePay => {
+                    let pay_data = TokenSource {
+                        source_type: "token".to_string(),
+                        token: wallet_data
+                            .get_required_value("wallet_data")
+                            .change_context(errors::ConnectorError::RequestEncodingFailed)?
+                            .token
+                            .to_owned()
+                            .get_required_value("token")
+                            .change_context(errors::ConnectorError::RequestEncodingFailed)
+                            .attach_printable("No token passed")?,
+                    };
+                    Ok(Source::Token(pay_data))
+                }
+                _ => Err(errors::ConnectorError::NotImplemented(
+                    "Payment Method".to_string(),
+                )),
+            },
+            _ => Err(errors::ConnectorError::MissingRequiredField {
+                field_name: "payment_method",
+            }),
+        }?;
+
         let connector_auth = &item.connector_auth_type;
         let auth_type: CheckoutAuthType = connector_auth.try_into()?;
         let processing_channel_id = auth_type.processing_channel_id;
