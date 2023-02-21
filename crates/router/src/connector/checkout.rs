@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod transformers;
+use base64::Engine;
 
 use std::fmt::Debug;
 
@@ -10,17 +11,19 @@ use self::transformers as checkout;
 use super::utils::RefundsRequestData;
 use crate::{
     configs::settings,
+    connector::utils as conn_utils,
     consts,
     core::{
         errors::{self, CustomResult},
         payments,
     },
+    db::StorageInterface,
     headers, logger, services,
     types::{
         self,
-        api::{self, ConnectorCommon},
+        api::{self,ConnectorCommon},
     },
-    utils::{self, BytesExt},
+    utils::{self,crypto, ByteSliceExt, BytesExt},
 };
 
 #[derive(Debug, Clone)]
@@ -732,25 +735,93 @@ impl services::ConnectorIntegration<api::RSync, types::RefundsData, types::Refun
 
 #[async_trait::async_trait]
 impl api::IncomingWebhook for Checkout {
+
+    fn get_webhook_source_verification_algorithm(
+        &self,
+        _headers: &actix_web::http::header::HeaderMap,
+        _body: &[u8],
+    ) -> CustomResult<Box<dyn crypto::VerifySignature + Send>, errors::ConnectorError> {
+        Ok(Box::new(crypto::HmacSha256))
+    }
+
+    fn get_webhook_source_verification_signature(
+        &self,
+        headers: &actix_web::http::header::HeaderMap,
+        _body: &[u8],
+    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        let base64_signature = conn_utils::get_header_key_value("cko-signature", headers)?;
+        let signature = consts::BASE64_ENGINE_URL_SAFE
+            .decode(base64_signature.as_bytes())
+            .into_report()
+            .change_context(errors::ConnectorError::WebhookSourceVerificationFailed)?;
+        Ok(signature)
+        
+    }
+
+    fn get_webhook_source_verification_message(
+        &self,
+        _headers: &actix_web::http::header::HeaderMap,
+        body: &[u8],
+        _merchant_id: &str,
+        _secret: &[u8],
+    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        Ok(format!(
+            "{}",
+            String::from_utf8_lossy(body)
+        )
+        .into_bytes())
+    }
+
+    async fn get_webhook_source_verification_merchant_secret(
+        &self,
+        db: &dyn StorageInterface,
+        merchant_id: &str,
+    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        let key = format!("whsec_verification_{}_{}", self.id(), merchant_id);
+        let secret = db
+            .get_key(&key)
+            .await
+            .change_context(errors::ConnectorError::WebhookVerificationSecretNotFound)?;
+
+        Ok(secret)
+    }
+
+
+
     fn get_webhook_object_reference_id(
         &self,
-        _body: &[u8],
+        body: &[u8],
     ) -> CustomResult<String, errors::ConnectorError> {
-        Err(errors::ConnectorError::WebhooksNotImplemented).into_report()
+        let webhook:checkout::CheckoutIncomingWebhook = body
+        .parse_struct("CheckoutIncomingWebhook")
+        .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
+        Ok(webhook.data.id)
     }
 
     fn get_webhook_event_type(
         &self,
-        _body: &[u8],
+        body: &[u8],
     ) -> CustomResult<api::IncomingWebhookEvent, errors::ConnectorError> {
-        Err(errors::ConnectorError::WebhooksNotImplemented).into_report()
+        println!("-------------> {}", String::from_utf8_lossy(body));
+        let webhook:checkout::CheckoutIncomingWebhook = body
+        
+        .parse_struct("CheckoutIncomingWebhook")
+        .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
+        Ok(match webhook.event_type {
+            checkout::CheckoutWebhookEventType::PaymentDeclined => api::IncomingWebhookEvent::PaymentIntentFailure,
+            checkout::CheckoutWebhookEventType::PaymentApproved => api::IncomingWebhookEvent::PaymentIntentSuccess,
+            checkout::CheckoutWebhookEventType::PaymentCaptured => api::IncomingWebhookEvent::PaymentIntentSuccess,
+        })
     }
 
     fn get_webhook_resource_object(
         &self,
-        _body: &[u8],
+        body: &[u8],
     ) -> CustomResult<serde_json::Value, errors::ConnectorError> {
-        Err(errors::ConnectorError::WebhooksNotImplemented).into_report()
+        let webhook:checkout::CheckoutWebhookObjectResource = body
+        .parse_struct("CheckoutWebhookObjectResource")
+        .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
+        Ok(webhook.data)
     }
 }
 
