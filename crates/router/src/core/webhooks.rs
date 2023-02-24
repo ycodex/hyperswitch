@@ -32,6 +32,7 @@ async fn payments_incoming_webhook_flow(
     webhook_details: api::IncomingWebhookDetails,
     source_verified: bool,
 ) -> CustomResult<(), errors::WebhooksFlowError> {
+    println!("source_verified:---->{}", source_verified);
     let consume_or_trigger_flow = if source_verified {
         payments::CallConnectorAction::HandleResponse(webhook_details.resource_object)
     } else {
@@ -56,7 +57,7 @@ async fn payments_incoming_webhook_flow(
     )
     .await
     .change_context(errors::WebhooksFlowError::PaymentsCoreFailed)?;
-
+    println!("payments_response------------> {:?}", payments_response);
     match payments_response {
         services::ApplicationResponse::Json(payments_response) => {
             let payment_id = payments_response
@@ -221,6 +222,7 @@ pub async fn webhooks_core(
         .await
         .change_context(errors::ApiErrorResponse::InternalServerError)
         .attach_printable("There was an issue in incoming webhook source verification")?;
+    println!("source_verified:------>{}", source_verified);
 
     let decoded_body = connector
         .decode_webhook_body(
@@ -238,6 +240,8 @@ pub async fn webhooks_core(
         .change_context(errors::ApiErrorResponse::InternalServerError)
         .attach_printable("Could not find event type in incoming webhook body")?;
 
+    println!("event_type:------>{:?}", event_type);
+
     let process_webhook_further = utils::lookup_webhook_event(
         &*state.store,
         connector_name,
@@ -245,6 +249,8 @@ pub async fn webhooks_core(
         &event_type,
     )
     .await;
+
+    println!("process_webhook_further:------>{}", process_webhook_further);
 
     if process_webhook_further {
         let object_ref_id = connector

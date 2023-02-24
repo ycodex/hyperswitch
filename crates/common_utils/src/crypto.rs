@@ -117,7 +117,8 @@ impl VerifySignature for HmacSha256 {
         msg: &[u8],
     ) -> CustomResult<bool, errors::CryptoError> {
         let key = hmac::Key::new(hmac::HMAC_SHA256, secret);
-
+        let message = self.sign_message(secret, msg)?;
+        println!("signed message:------>{:?}",message);
         Ok(hmac::verify(&key, msg, signature).is_ok())
     }
 }

@@ -108,13 +108,16 @@ pub trait IncomingWebhook: ConnectorCommon + Sync {
         let signature = self
             .get_webhook_source_verification_signature(headers, body)
             .change_context(errors::ConnectorError::WebhookSourceVerificationFailed)?;
+        println!("signature:------>{:?}", signature.clone());
         let secret = self
             .get_webhook_source_verification_merchant_secret(db, merchant_id)
             .await
             .change_context(errors::ConnectorError::WebhookSourceVerificationFailed)?;
+        println!("secret:------>{:?}", String::from_utf8(secret.clone()));
         let message = self
             .get_webhook_source_verification_message(headers, body, merchant_id, &secret)
             .change_context(errors::ConnectorError::WebhookSourceVerificationFailed)?;
+        println!("message:------>{:?}", String::from_utf8(message.clone()));
 
         algorithm
             .verify_signature(&secret, &signature, &message)

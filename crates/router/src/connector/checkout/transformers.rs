@@ -566,71 +566,18 @@ impl From<CheckoutRedirectResponseStatus> for enums::AttemptStatus {
 
 
 #[derive(Debug, Deserialize)]
-// #[serde(rename_all = "snake_case")]
+#[serde(rename_all="snake_case")]
 pub enum CheckoutWebhookEventType{
-    #[serde(rename = "payment_approved")]
     PaymentApproved ,
-    #[serde(rename = "payment_captured")]
-    PaymentCaptured ,
-    #[serde(rename = "payment_declined")]
     PaymentDeclined
 }
 
 
-
-// "id": "src_tn57oajiuzjebbxlm6ilyup2ku",
-//       "type": "card"
-//       "expiry_month": 12,
-//       "expiry_year": 2025,
-//       "scheme": "VISA",
-//       "last_4": "4242",
-//       "fingerprint": "74CF3810E362B0B3AD300EF6DFE9EF711838F39F318B32DD745870A2DDDAC2F4",
-//       "bin": "424242",
-//       "card_type": "CREDIT",
-//       "card_category": "CONSUMER",
-//       "issuer_country": "GB",
-//       "product_id": "F",
-//       "product_type": "Visa Classic",
-//       "avs_check": "G"
-
-// #[derive(Debug, Deserialize)]
-// pub struct CheckoutWHSource{
-//     pub id:String,
-//     #[serde(rename = "type")]
-//     pub source_type:String,
-//     pub expiry_month:i64,
-//     pub expiry_year : i64,
-//     pub scheme:String,
-//     pub last_4:String,
-//     pub fingerprint:String,
-//     pub card_type:String,
-//     pub card_category:String,
-//     pub issuer_country:String,
-//     pub product_id:String,
-//     pub product_type:String,
-//     pub avs_check:String,
-// }
-
 #[derive(Debug, Deserialize)]
 pub struct CheckoutData {
-    pub id:String, 
-    // pub action_id:String,
-    // // pub reference: String,
-    // pub amount:i64,
-    // pub auth_code:String, 
-    // pub currency:String,
-    // // pub metadata:Option<serde_json>,
-    // pub payment_type:String,
-    // pub processed_on: String,
-    // pub response_code:String,
-    // pub response_summary:String,    
-    // pub source: CheckoutWHSource
+    pub id:String,
 }
 
-// #[derive(Debug, Deserialize)]
-// pub struct CheckoutWebhookDataResource {
-//     pub object: serde_json::Value,
-// }
 
 #[derive(Debug, Deserialize)]
 pub struct CheckoutWebhookObjectResource {
@@ -645,15 +592,3 @@ pub struct CheckoutIncomingWebhook {
     pub event_type: CheckoutWebhookEventType,
     pub data: CheckoutData,
 }
-
-
-// impl TryFrom<CheckoutWebhookEventType> for api::IncomingWebhookEvent {
-//     type Error = error_stack::Report<errors::ConnectorError>;
-//     fn try_from(value: CheckoutWebhookEventType) -> Result<Self, Self::Error> {
-//         match value {
-//             CheckoutWebhookEventType::PaymentApproved => Ok(Self::PaymentIntentSuccess),
-//             CheckoutWebhookEventType::PaymentDeclined => Ok(Self::PaymentIntentFailure),
-//             CheckoutWebhookEventType::PaymentCaptured => Ok(Self::PaymentIntentSuccess)
-//         }
-//     }
-// }

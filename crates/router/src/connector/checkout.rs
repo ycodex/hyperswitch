@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 mod transformers;
-use base64::Engine;
 
 use std::fmt::Debug;
 
@@ -749,12 +748,8 @@ impl api::IncomingWebhook for Checkout {
         headers: &actix_web::http::header::HeaderMap,
         _body: &[u8],
     ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
-        let base64_signature = conn_utils::get_header_key_value("cko-signature", headers)?;
-        let signature = consts::BASE64_ENGINE_URL_SAFE
-            .decode(base64_signature.as_bytes())
-            .into_report()
-            .change_context(errors::ConnectorError::WebhookSourceVerificationFailed)?;
-        Ok(signature)
+        let signature = conn_utils::get_header_key_value("cko-signature", headers)?;
+        Ok(signature.as_bytes().to_vec())
         
     }
 
@@ -765,11 +760,7 @@ impl api::IncomingWebhook for Checkout {
         _merchant_id: &str,
         _secret: &[u8],
     ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
-        Ok(format!(
-            "{}",
-            String::from_utf8_lossy(body)
-        )
-        .into_bytes())
+        Ok(format!("{}",String::from_utf8_lossy(body)).into_bytes())
     }
 
     async fn get_webhook_source_verification_merchant_secret(
@@ -782,11 +773,8 @@ impl api::IncomingWebhook for Checkout {
             .get_key(&key)
             .await
             .change_context(errors::ConnectorError::WebhookVerificationSecretNotFound)?;
-
         Ok(secret)
     }
-
-
 
     fn get_webhook_object_reference_id(
         &self,
@@ -802,7 +790,6 @@ impl api::IncomingWebhook for Checkout {
         &self,
         body: &[u8],
     ) -> CustomResult<api::IncomingWebhookEvent, errors::ConnectorError> {
-        println!("-------------> {}", String::from_utf8_lossy(body));
         let webhook:checkout::CheckoutIncomingWebhook = body
         
         .parse_struct("CheckoutIncomingWebhook")
@@ -810,7 +797,6 @@ impl api::IncomingWebhook for Checkout {
         Ok(match webhook.event_type {
             checkout::CheckoutWebhookEventType::PaymentDeclined => api::IncomingWebhookEvent::PaymentIntentFailure,
             checkout::CheckoutWebhookEventType::PaymentApproved => api::IncomingWebhookEvent::PaymentIntentSuccess,
-            checkout::CheckoutWebhookEventType::PaymentCaptured => api::IncomingWebhookEvent::PaymentIntentSuccess,
         })
     }
 
