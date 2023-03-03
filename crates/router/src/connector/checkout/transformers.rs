@@ -1,4 +1,3 @@
-
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -564,20 +563,18 @@ impl From<CheckoutRedirectResponseStatus> for enums::AttemptStatus {
     }
 }
 
-
 #[derive(Debug, Deserialize)]
-#[serde(rename_all="snake_case")]
-pub enum CheckoutWebhookEventType{
-    PaymentApproved ,
-    PaymentDeclined
+#[serde(rename_all = "snake_case")]
+pub enum CheckoutWebhookEventType {
+    PaymentCaptured,
+    PaymentDeclined,
+    PaymentAuthenticationFailed,
 }
-
 
 #[derive(Debug, Deserialize)]
 pub struct CheckoutData {
-    pub id:String,
+    pub id: String,
 }
-
 
 #[derive(Debug, Deserialize)]
 pub struct CheckoutWebhookObjectResource {
@@ -587,7 +584,7 @@ pub struct CheckoutWebhookObjectResource {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckoutIncomingWebhook {
-    pub id:String, 
+    pub id: String,
     #[serde(rename = "type")]
     pub event_type: CheckoutWebhookEventType,
     pub data: CheckoutData,

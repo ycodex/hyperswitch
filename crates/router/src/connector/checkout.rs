@@ -20,9 +20,9 @@ use crate::{
     headers, logger, services,
     types::{
         self,
-        api::{self,ConnectorCommon},
+        api::{self, ConnectorCommon},
     },
-    utils::{self,crypto, ByteSliceExt, BytesExt},
+    utils::{self, crypto, ByteSliceExt, BytesExt},
 };
 
 #[derive(Debug, Clone)]
@@ -265,6 +265,7 @@ impl
         types::PaymentsResponseData: Clone,
     {
         logger::debug!(raw_response=?res);
+        println!("Checkout PSync Response:---->{:?}", res.response);
         let response: checkout::PaymentsResponse = res
             .response
             .parse_struct("PaymentsResponse")
@@ -734,7 +735,6 @@ impl services::ConnectorIntegration<api::RSync, types::RefundsData, types::Refun
 
 #[async_trait::async_trait]
 impl api::IncomingWebhook for Checkout {
-
     fn get_webhook_source_verification_algorithm(
         &self,
         _headers: &actix_web::http::header::HeaderMap,
@@ -748,9 +748,23 @@ impl api::IncomingWebhook for Checkout {
         headers: &actix_web::http::header::HeaderMap,
         _body: &[u8],
     ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
-        let signature = conn_utils::get_header_key_value("cko-signature", headers)?;
-        Ok(signature.as_bytes().to_vec())
-        
+        let signature = conn_utils::get_header_key_value("cko-signature", headers)
+            .change_context(errors::ConnectorError::WebhookSignatureNotFound)?;
+        let sign = hex::decode(signature)
+            .into_report()
+            .change_context(errors::ConnectorError::WebhookSignatureNotFound);
+
+        // let signbase64 = consts::BASE64_ENGINE
+        //     .decode(sign.unwrap())
+        //     .into_report()
+        //     .change_context(errors::ConnectorError::WebhookSourceVerificationFailed)?;
+        // println!("-------->{:?}", signature);
+        // println!("****-----> {:?}", sign);
+
+        // println!("@#$---> {:?}",  String::from_utf8_lossy(&signbase64));
+        // Ok(format!("{}",String::from_utf8_lossy(signature)).into_bytes())
+        //print!(">>>signatureRecieved{}",signature);
+        Ok(sign.change_context(errors::ConnectorError::WebhookSignatureDecodingFailed)?)
     }
 
     fn get_webhook_source_verification_message(
@@ -760,7 +774,8 @@ impl api::IncomingWebhook for Checkout {
         _merchant_id: &str,
         _secret: &[u8],
     ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
-        Ok(format!("{}",String::from_utf8_lossy(body)).into_bytes())
+        //println!("$$----> bodyy : {:?}",body);
+        Ok(format!("{}", String::from_utf8_lossy(body)).into_bytes())
     }
 
     async fn get_webhook_source_verification_merchant_secret(
@@ -768,6 +783,12 @@ impl api::IncomingWebhook for Checkout {
         db: &dyn StorageInterface,
         merchant_id: &str,
     ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        //let key = "8V8x0dLK%ByD*DNS0GGh".to_string();
+        // format!("whsec_verification_{}_{}", self.id(), merchant_id);
+        // let secret = db
+        //     .get_key(&key)
+        //     .await
+        //     .change_context(errors::ConnectorError::WebhookVerificationSecretNotFound)?;
         let key = format!("whsec_verification_{}_{}", self.id(), merchant_id);
         let secret = db
             .get_key(&key)
@@ -780,9 +801,9 @@ impl api::IncomingWebhook for Checkout {
         &self,
         body: &[u8],
     ) -> CustomResult<String, errors::ConnectorError> {
-        let webhook:checkout::CheckoutIncomingWebhook = body
-        .parse_struct("CheckoutIncomingWebhook")
-        .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
+        let webhook: checkout::CheckoutIncomingWebhook = body
+            .parse_struct("CheckoutIncomingWebhook")
+            .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
         Ok(webhook.data.id)
     }
 
@@ -790,13 +811,17 @@ impl api::IncomingWebhook for Checkout {
         &self,
         body: &[u8],
     ) -> CustomResult<api::IncomingWebhookEvent, errors::ConnectorError> {
-        let webhook:checkout::CheckoutIncomingWebhook = body
-        
-        .parse_struct("CheckoutIncomingWebhook")
-        .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
+        let webhook: checkout::CheckoutIncomingWebhook = body
+            .parse_struct("CheckoutIncomingWebhook")
+            .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
         Ok(match webhook.event_type {
-            checkout::CheckoutWebhookEventType::PaymentDeclined => api::IncomingWebhookEvent::PaymentIntentFailure,
-            checkout::CheckoutWebhookEventType::PaymentApproved => api::IncomingWebhookEvent::PaymentIntentSuccess,
+            checkout::CheckoutWebhookEventType::PaymentAuthenticationFailed
+            | checkout::CheckoutWebhookEventType::PaymentDeclined => {
+                api::IncomingWebhookEvent::PaymentIntentFailure
+            }
+            checkout::CheckoutWebhookEventType::PaymentCaptured => {
+                api::IncomingWebhookEvent::PaymentIntentSuccess
+            }
         })
     }
 
@@ -804,9 +829,9 @@ impl api::IncomingWebhook for Checkout {
         &self,
         body: &[u8],
     ) -> CustomResult<serde_json::Value, errors::ConnectorError> {
-        let webhook:checkout::CheckoutWebhookObjectResource = body
-        .parse_struct("CheckoutWebhookObjectResource")
-        .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
+        let webhook: checkout::CheckoutWebhookObjectResource = body
+            .parse_struct("CheckoutWebhookObjectResource")
+            .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
         Ok(webhook.data)
     }
 }

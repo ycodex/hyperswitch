@@ -108,16 +108,23 @@ pub trait IncomingWebhook: ConnectorCommon + Sync {
         let signature = self
             .get_webhook_source_verification_signature(headers, body)
             .change_context(errors::ConnectorError::WebhookSourceVerificationFailed)?;
-        println!("signature:------>{:?}", signature.clone());
+        //println!("signature:------>{:?}", signature.clone());
         let secret = self
             .get_webhook_source_verification_merchant_secret(db, merchant_id)
             .await
             .change_context(errors::ConnectorError::WebhookSourceVerificationFailed)?;
-        println!("secret:------>{:?}", String::from_utf8(secret.clone()));
+        //println!("secret:------>{:?}", String::from_utf8(secret.clone()));
         let message = self
             .get_webhook_source_verification_message(headers, body, merchant_id, &secret)
             .change_context(errors::ConnectorError::WebhookSourceVerificationFailed)?;
-        println!("message:------>{:?}", String::from_utf8(message.clone()));
+        //println!("message:------>{:?}", String::from_utf8(message.clone()));
+
+        // let key = hmac::Key::new(hmac::HMAC_SHA256, &secret);
+        // let tag = hmac::sign(&key, &message);
+        // let hmac_sign = hex::encode(tag);
+
+        // print!(">>>hmacsign{}", hmac_sign);
+        // print!(">>>hmacsignbytes{:?}", hmac_sign.into_bytes());
 
         algorithm
             .verify_signature(&secret, &signature, &message)

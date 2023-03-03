@@ -262,6 +262,8 @@ pub enum ConnectorError {
     #[error("Failed to decode webhook event body")]
     WebhookBodyDecodingFailed,
     #[error("Signature not found for incoming webhook")]
+    WebhookSignatureDecodingFailed,
+    #[error("Signature not found for incoming webhook")]
     WebhookSignatureNotFound,
     #[error("Failed to verify webhook source")]
     WebhookSourceVerificationFailed,

@@ -109,6 +109,7 @@ where
         )
         .await?;
 
+        println!("should_call_connector(&operation, &payment_data): {}, operation: {:?} payment_data: {:?}", should_call_connector(&operation, &payment_data), operation, payment_data.payment_intent.status,);
     let connector = match should_call_connector(&operation, &payment_data) {
         true => Some(
             route_connector(
