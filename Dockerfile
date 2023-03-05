@@ -23,6 +23,8 @@ ENV CARGO_INCREMENTAL=0
 # from transient network timeouts or other issues.
 ENV CARGO_NET_RETRY=10
 ENV RUSTUP_MAX_RETRIES=10
+# Use git CLI to fetch cargo registry
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 # Don't emit giant backtraces in the CI logs.
 ENV RUST_BACKTRACE="short"
 
