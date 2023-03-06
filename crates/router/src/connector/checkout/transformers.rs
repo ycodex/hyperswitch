@@ -566,26 +566,28 @@ impl From<CheckoutRedirectResponseStatus> for enums::AttemptStatus {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckoutWebhookEventType {
-    PaymentCaptured,
-    PaymentDeclined,
-    PaymentAuthenticationFailed,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CheckoutData {
-    pub id: String,
+    #[serde(alias = "PaymentCaptured")]
+    Captured,
+    #[serde(alias = "PaymentDeclined")]
+    Declined,
+    #[serde(alias = "PaymentAuthenticationFailed")]
+    AuthenticationFailed,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CheckoutWebhookObjectResource {
+    #[serde(rename = "type")]
+    pub event_type: CheckoutWebhookEventType,
     pub data: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CheckoutIncomingWebhook {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub event_type: CheckoutWebhookEventType,
-    pub data: CheckoutData,
+impl From<CheckoutWebhookEventType> for CheckoutPaymentStatus {
+    fn from(item: CheckoutWebhookEventType) -> Self {
+        match item {
+            CheckoutWebhookEventType::Captured => Self::Captured,
+            CheckoutWebhookEventType::Declined | CheckoutWebhookEventType::AuthenticationFailed => {
+                Self::Declined
+            }
+        }
+    }
 }

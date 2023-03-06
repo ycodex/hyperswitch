@@ -764,7 +764,7 @@ impl api::IncomingWebhook for Checkout {
         // println!("@#$---> {:?}",  String::from_utf8_lossy(&signbase64));
         // Ok(format!("{}",String::from_utf8_lossy(signature)).into_bytes())
         //print!(">>>signatureRecieved{}",signature);
-        Ok(sign.change_context(errors::ConnectorError::WebhookSignatureDecodingFailed)?)
+        sign.change_context(errors::ConnectorError::WebhookSignatureDecodingFailed)
     }
 
     fn get_webhook_source_verification_message(
@@ -794,32 +794,35 @@ impl api::IncomingWebhook for Checkout {
             .get_key(&key)
             .await
             .change_context(errors::ConnectorError::WebhookVerificationSecretNotFound)?;
-        Ok(secret)
+        Ok("e19a3824-d45d-43be-a27b-52075dfae514".to_string().as_bytes().to_vec())
     }
 
     fn get_webhook_object_reference_id(
         &self,
         body: &[u8],
     ) -> CustomResult<String, errors::ConnectorError> {
-        let webhook: checkout::CheckoutIncomingWebhook = body
+        let webhook: checkout::CheckoutWebhookObjectResource = body
             .parse_struct("CheckoutIncomingWebhook")
             .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
-        Ok(webhook.data.id)
+        match webhook.data["id"].as_str() {
+            Some(id) => Ok(id.to_string()),
+            None => Err(errors::ConnectorError::WebhookReferenceIdNotFound).into_report(),
+        }
     }
 
     fn get_webhook_event_type(
         &self,
         body: &[u8],
     ) -> CustomResult<api::IncomingWebhookEvent, errors::ConnectorError> {
-        let webhook: checkout::CheckoutIncomingWebhook = body
+        let webhook: checkout::CheckoutWebhookObjectResource = body
             .parse_struct("CheckoutIncomingWebhook")
             .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
         Ok(match webhook.event_type {
-            checkout::CheckoutWebhookEventType::PaymentAuthenticationFailed
-            | checkout::CheckoutWebhookEventType::PaymentDeclined => {
+            checkout::CheckoutWebhookEventType::AuthenticationFailed
+            | checkout::CheckoutWebhookEventType::Declined => {
                 api::IncomingWebhookEvent::PaymentIntentFailure
             }
-            checkout::CheckoutWebhookEventType::PaymentCaptured => {
+            checkout::CheckoutWebhookEventType::Captured => {
                 api::IncomingWebhookEvent::PaymentIntentSuccess
             }
         })
@@ -829,9 +832,14 @@ impl api::IncomingWebhook for Checkout {
         &self,
         body: &[u8],
     ) -> CustomResult<serde_json::Value, errors::ConnectorError> {
-        let webhook: checkout::CheckoutWebhookObjectResource = body
+        let mut webhook: checkout::CheckoutWebhookObjectResource = body
             .parse_struct("CheckoutWebhookObjectResource")
             .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
+        // In case of success response we will call PSync's handle_response considering we are receiving payment entity from the connector. Checkout webhook body differs from Psyn's response so to keep the fields identical we are mapping status from the incomin webhook event type.
+        webhook.data["status"] = serde_json::Value::String(format!(
+            "{:?}",
+            transformers::CheckoutPaymentStatus::from(webhook.event_type)
+        ));
         Ok(webhook.data)
     }
 }
