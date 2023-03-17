@@ -86,6 +86,7 @@ default_imp_for_complete_authorize!(
     connector::Fiserv,
     connector::Klarna,
     connector::Multisafepay,
+    connector::Nmi,
     connector::Payu,
     connector::Rapyd,
     connector::Shift4,

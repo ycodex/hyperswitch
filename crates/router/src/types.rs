@@ -57,6 +57,8 @@ pub type RefundsResponseRouterData<F, R> =
 
 pub type PaymentsAuthorizeType =
     dyn services::ConnectorIntegration<api::Authorize, PaymentsAuthorizeData, PaymentsResponseData>;
+pub type PaymentsVerifyType =
+    dyn services::ConnectorIntegration<api::Verify, VerifyRequestData, PaymentsResponseData>;
 pub type PaymentsComeplteAuthorizeType = dyn services::ConnectorIntegration<
     api::CompleteAuthorize,
     CompleteAuthorizeData,

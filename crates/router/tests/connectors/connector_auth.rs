@@ -18,6 +18,7 @@ pub(crate) struct ConnectorAuthentication {
     pub globalpay: Option<HeaderKey>,
     pub mollie: Option<HeaderKey>,
     pub multisafepay: Option<HeaderKey>,
+    pub nmi: Option<HeaderKey>,
     pub nuvei: Option<SignatureKey>,
     pub paypal: Option<BodyKey>,
     pub payu: Option<BodyKey>,
