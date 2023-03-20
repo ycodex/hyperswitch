@@ -26,7 +26,6 @@ pub mod utils;
 pub mod worldline;
 pub mod worldpay;
 
-
 pub use self::{
     aci::Aci, adyen::Adyen, airwallex::Airwallex, applepay::Applepay,
     authorizedotnet::Authorizedotnet, bambora::Bambora, bluesnap::Bluesnap, braintree::Braintree,

@@ -532,7 +532,6 @@ where
     serializer.serialize_f64(float_value)
 }
 
-<<<<<<< HEAD
 pub fn collect_values_by_removing_signature(
     value: &serde_json::Value,
     signature: &String,
@@ -569,7 +568,7 @@ pub fn collect_and_sort_values_by_removing_signature(
     let mut values = collect_values_by_removing_signature(value, signature);
     values.sort();
     values
-=======
+}
 
 static DENOMINATION: Lazy<HashMap<storage_models::enums::Currency, i32>> = Lazy::new(|| {
     let mut map = HashMap::new();
@@ -592,5 +591,4 @@ pub fn convert_to_higher_denomination(
         .into_report()
         .change_context(errors::ConnectorError::RequestEncodingFailed)?;
     Ok(f64::from(amount_u32) / f64::from(*factor))
->>>>>>> 7c4fbade (feat(connecotr): Add NMI support for Verify, Authorize, PSync, Capture, Void, Execute and RSync.)
 }
