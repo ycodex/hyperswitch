@@ -198,6 +198,7 @@ impl ConnectorData {
             "globalpay" => Ok(Box::new(&connector::Globalpay)),
             "klarna" => Ok(Box::new(&connector::Klarna)),
             "mollie" => Ok(Box::new(&connector::Mollie)),
+            "nmi" => Ok(Box::new(&connector::Nmi)),
             "nuvei" => Ok(Box::new(&connector::Nuvei)),
             "payu" => Ok(Box::new(&connector::Payu)),
             "rapyd" => Ok(Box::new(&connector::Rapyd)),
@@ -208,7 +209,6 @@ impl ConnectorData {
             "multisafepay" => Ok(Box::new(&connector::Multisafepay)),
             "paypal" => Ok(Box::new(&connector::Paypal)),
             "trustpay" => Ok(Box::new(&connector::Trustpay)),
-            "nmi" => Ok(Box::new(&connector::Nmi)),
             _ => Err(report!(errors::ConnectorError::InvalidConnectorName)
                 .attach_printable(format!("invalid connector name: {connector_name}")))
             .change_context(errors::ApiErrorResponse::InternalServerError),
