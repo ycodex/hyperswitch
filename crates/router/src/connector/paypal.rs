@@ -42,6 +42,14 @@ impl api::RefundExecute for Paypal {}
 impl api::RefundSync for Paypal {}
 
 impl Paypal {
+    pub fn get_con_id(
+        &self,
+        connector_meta: &Option<serde_json::Value>,
+    ) -> CustomResult<String, errors::ConnectorError> {
+        let meta: PaypalMeta = to_connector_meta(connector_meta.clone())?;
+        Ok(meta.authorize_id.unwrap_or_default())
+    }
+
     pub fn get_order_error_response(
         &self,
         res: Response,

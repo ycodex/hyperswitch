@@ -71,6 +71,8 @@ pub trait ConnectorCommon {
             reason: None,
         })
     }
+
+    fn connector_transaction_id(&self) -> String {}
 }
 
 /// Extended trait for connector common to allow functions with generic type
@@ -91,6 +93,7 @@ pub trait Router {}
 
 pub trait Connector:
     Send + Refund + Payment + Debug + ConnectorRedirectResponse + IncomingWebhook + ConnectorAccessToken
+//
 {
 }
 
