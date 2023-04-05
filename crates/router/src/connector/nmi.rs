@@ -1,7 +1,8 @@
 mod transformers;
 
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 
+use api_models::webhooks::IncomingWebhookEvent;
 use common_utils::ext_traits::ByteSliceExt;
 use error_stack::{IntoReport, ResultExt};
 use transformers as nmi;
@@ -10,14 +11,18 @@ use self::transformers::NmiCaptureRequest;
 use crate::{
     configs::settings,
     connector::nmi::transformers::{get_query_info, get_refund_status},
-    core::errors::{self, CustomResult},
+    core::{
+        errors::{self, CustomResult},
+        payments,
+    },
+    db::StorageInterface,
     services::{self, ConnectorIntegration},
     types::{
         self,
         api::{self, ConnectorCommon, ConnectorCommonExt},
         ErrorResponse,
     },
-    utils,
+    utils::{crypto, Encode},
 };
 
 #[derive(Clone, Debug)]
@@ -111,7 +116,7 @@ impl ConnectorIntegration<api::Verify, types::VerifyRequestData, types::Payments
         req: &types::VerifyRouterData,
     ) -> CustomResult<Option<String>, errors::ConnectorError> {
         let connector_req = nmi::NmiPaymentsRequest::try_from(req)?;
-        let nmi_req = utils::Encode::<nmi::NmiPaymentsRequest>::url_encode(&connector_req)
+        let nmi_req = Encode::<nmi::NmiPaymentsRequest>::url_encode(&connector_req)
             .change_context(errors::ConnectorError::RequestEncodingFailed)?;
         Ok(Some(nmi_req))
     }
@@ -180,7 +185,7 @@ impl ConnectorIntegration<api::Authorize, types::PaymentsAuthorizeData, types::P
         req: &types::PaymentsAuthorizeRouterData,
     ) -> CustomResult<Option<String>, errors::ConnectorError> {
         let connector_req = nmi::NmiPaymentsRequest::try_from(req)?;
-        let nmi_req = utils::Encode::<nmi::NmiPaymentsRequest>::url_encode(&connector_req)
+        let nmi_req = Encode::<nmi::NmiPaymentsRequest>::url_encode(&connector_req)
             .change_context(errors::ConnectorError::RequestEncodingFailed)?;
         Ok(Some(nmi_req))
     }
@@ -251,7 +256,7 @@ impl ConnectorIntegration<api::PSync, types::PaymentsSyncData, types::PaymentsRe
         req: &types::PaymentsSyncRouterData,
     ) -> CustomResult<Option<String>, errors::ConnectorError> {
         let connector_req = nmi::NmiSyncRequest::try_from(req)?;
-        let nmi_req = utils::Encode::<nmi::NmiSyncRequest>::url_encode(&connector_req)
+        let nmi_req = Encode::<nmi::NmiSyncRequest>::url_encode(&connector_req)
             .change_context(errors::ConnectorError::RequestEncodingFailed)?;
         Ok(Some(nmi_req))
     }
@@ -315,7 +320,7 @@ impl ConnectorIntegration<api::Capture, types::PaymentsCaptureData, types::Payme
         req: &types::PaymentsCaptureRouterData,
     ) -> CustomResult<Option<String>, errors::ConnectorError> {
         let connector_req = nmi::NmiCaptureRequest::try_from(req)?;
-        let nmi_req = utils::Encode::<NmiCaptureRequest>::url_encode(&connector_req)
+        let nmi_req = Encode::<NmiCaptureRequest>::url_encode(&connector_req)
             .change_context(errors::ConnectorError::RequestEncodingFailed)?;
         Ok(Some(nmi_req))
     }
@@ -384,7 +389,7 @@ impl ConnectorIntegration<api::Void, types::PaymentsCancelData, types::PaymentsR
         req: &types::PaymentsCancelRouterData,
     ) -> CustomResult<Option<String>, errors::ConnectorError> {
         let connector_req = nmi::NmiCancelRequest::try_from(req)?;
-        let nmi_req = utils::Encode::<nmi::NmiCancelRequest>::url_encode(&connector_req)
+        let nmi_req = Encode::<nmi::NmiCancelRequest>::url_encode(&connector_req)
             .change_context(errors::ConnectorError::RequestEncodingFailed)?;
         Ok(Some(nmi_req))
     }
@@ -449,7 +454,7 @@ impl ConnectorIntegration<api::Execute, types::RefundsData, types::RefundsRespon
         req: &types::RefundsRouterData<api::Execute>,
     ) -> CustomResult<Option<String>, errors::ConnectorError> {
         let connector_req = nmi::NmiRefundRequest::try_from(req)?;
-        let nmi_req = utils::Encode::<nmi::NmiRefundRequest>::url_encode(&connector_req)
+        let nmi_req = Encode::<nmi::NmiRefundRequest>::url_encode(&connector_req)
             .change_context(errors::ConnectorError::RequestEncodingFailed)?;
         Ok(Some(nmi_req))
     }
@@ -516,7 +521,7 @@ impl ConnectorIntegration<api::RSync, types::RefundsData, types::RefundsResponse
         req: &types::RefundsRouterData<api::RSync>,
     ) -> CustomResult<Option<String>, errors::ConnectorError> {
         let connector_req = nmi::NmiSyncRequest::try_from(req)?;
-        let nmi_req = utils::Encode::<nmi::NmiSyncRequest>::url_encode(&connector_req)
+        let nmi_req = Encode::<nmi::NmiSyncRequest>::url_encode(&connector_req)
             .change_context(errors::ConnectorError::RequestEncodingFailed)?;
         Ok(Some(nmi_req))
     }
@@ -563,26 +568,136 @@ impl ConnectorIntegration<api::RSync, types::RefundsData, types::RefundsResponse
     }
 }
 
+// NMI has similar functionality w.r.t Stripe
+fn get_signature_elements_from_header(
+    headers: &actix_web::http::header::HeaderMap,
+) -> CustomResult<HashMap<String, Vec<u8>>, errors::ConnectorError> {
+    let security_header = headers
+        .get("Webhook-Signature")
+        .map(|header_value| {
+            header_value
+                .to_str()
+                .map(String::from)
+                .map_err(|_| errors::ConnectorError::WebhookSignatureNotFound)
+                .into_report()
+        })
+        .ok_or(errors::ConnectorError::WebhookSignatureNotFound)
+        .into_report()??;
+
+    let props = security_header.split(',').collect::<Vec<&str>>();
+    let mut security_header: HashMap<String, Vec<u8>> = HashMap::with_capacity(props.len());
+
+    for prop_str in &props {
+        let (prop_key, prop_value) = prop_str
+            .split_once('=')
+            .ok_or(errors::ConnectorError::WebhookSourceVerificationFailed)
+            .into_report()?;
+
+        security_header.insert(prop_key.to_string(), prop_value.bytes().collect());
+    }
+    Ok(security_header)
+}
+
 #[async_trait::async_trait]
 impl api::IncomingWebhook for Nmi {
-    fn get_webhook_object_reference_id(
+    fn get_webhook_source_verification_algorithm(
         &self,
         _request: &api::IncomingWebhookRequestDetails<'_>,
+    ) -> CustomResult<Box<dyn crypto::VerifySignature + Send>, errors::ConnectorError> {
+        Ok(Box::new(crypto::HmacSha256))
+    }
+
+    fn get_webhook_source_verification_signature(
+        &self,
+        request: &api::IncomingWebhookRequestDetails<'_>,
+    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        let mut security_header = get_signature_elements_from_header(request.headers)?;
+
+        let signature = security_header
+            .remove("s")
+            .ok_or(errors::ConnectorError::WebhookSignatureNotFound)
+            .into_report()?;
+
+        hex::decode(signature)
+            .into_report()
+            .change_context(errors::ConnectorError::WebhookSignatureNotFound)
+    }
+
+    fn get_webhook_source_verification_message(
+        &self,
+        request: &api::IncomingWebhookRequestDetails<'_>,
+        _merchant_id: &str,
+        _secret: &[u8],
+    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        let mut security_header = get_signature_elements_from_header(request.headers)?;
+
+        let nonce = security_header
+            .remove("t")
+            .ok_or(errors::ConnectorError::WebhookSignatureNotFound)
+            .into_report()?;
+
+        Ok(format!(
+            "{}.{}",
+            String::from_utf8_lossy(&nonce),
+            String::from_utf8_lossy(request.body)
+        )
+        .into_bytes())
+    }
+
+    async fn get_webhook_source_verification_merchant_secret(
+        &self,
+        db: &dyn StorageInterface,
+        merchant_id: &str,
+    ) -> CustomResult<Vec<u8>, errors::ConnectorError> {
+        let key = format!("whsec_verification_{}_{}", self.id(), merchant_id);
+        let secret = db
+            .get_key(&key)
+            .await
+            .change_context(errors::ConnectorError::WebhookVerificationSecretNotFound)?;
+
+        Ok(secret)
+    }
+
+    fn get_webhook_object_reference_id(
+        &self,
+        request: &api::IncomingWebhookRequestDetails<'_>,
     ) -> CustomResult<api_models::webhooks::ObjectReferenceId, errors::ConnectorError> {
-        Err(errors::ConnectorError::WebhooksNotImplemented).into_report()
+        let details: nmi::NmiWebhookObjectId = request
+            .body
+            .parse_struct("NmiWebhookObjectId")
+            .change_context(errors::ConnectorError::WebhookReferenceIdNotFound)?;
+
+        Ok(api_models::webhooks::ObjectReferenceId::PaymentId(
+            api_models::payments::PaymentIdType::ConnectorTransactionId(
+                details.data.event_body.transaction_id,
+            ),
+        ))
     }
 
     fn get_webhook_event_type(
         &self,
-        _request: &api::IncomingWebhookRequestDetails<'_>,
-    ) -> CustomResult<api::IncomingWebhookEvent, errors::ConnectorError> {
-        Err(errors::ConnectorError::WebhooksNotImplemented).into_report()
+        request: &api::IncomingWebhookRequestDetails<'_>,
+    ) -> CustomResult<IncomingWebhookEvent, errors::ConnectorError> {
+        let details: nmi::NmiWebhookObjectEventType = request
+            .body
+            .parse_struct("NmiWebhookObjectEventType")
+            .change_context(errors::ConnectorError::WebhookEventTypeNotFound)?;
+
+        Ok(match details.event_type.as_str() {
+            "transaction.sale.success" => api::IncomingWebhookEvent::PaymentIntentSuccess,
+            _ => Err(errors::ConnectorError::WebhookEventTypeNotFound).into_report()?,
+        })
     }
 
     fn get_webhook_resource_object(
         &self,
-        _request: &api::IncomingWebhookRequestDetails<'_>,
+        request: &api::IncomingWebhookRequestDetails<'_>,
     ) -> CustomResult<serde_json::Value, errors::ConnectorError> {
-        Err(errors::ConnectorError::WebhooksNotImplemented).into_report()
+        let details: nmi::NmiWebhookResourceObjectData = request
+            .body
+            .parse_struct("NmiWebhookResourceObjectData")
+            .change_context(errors::ConnectorError::WebhookResourceObjectNotFound)?;
+
+        Ok(details.data.object)
     }
 }

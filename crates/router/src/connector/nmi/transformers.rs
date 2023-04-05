@@ -759,3 +759,33 @@ pub fn get_refund_status(value: NmiStatus) -> Result<enums::RefundStatus, errors
         NmiStatus::Pendingsettlement | NmiStatus::Complete => Ok(enums::RefundStatus::Success),
     }
 }
+
+#[derive(Debug, Deserialize)]
+pub struct NmiWebhookDataObjectId {
+    pub transaction_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NmiWebhookDataId {
+    pub event_body: NmiWebhookDataObjectId,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NmiWebhookObjectId {
+    pub data: NmiWebhookDataId,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NmiWebhookObjectEventType {
+    pub event_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NmiWebhookDataResource {
+    pub object: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NmiWebhookResourceObjectData {
+    pub data: NmiWebhookDataResource,
+}
