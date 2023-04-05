@@ -235,7 +235,7 @@ impl
     TryFrom<
         types::ResponseRouterData<
             api::Capture,
-            StandardResponse,
+            NmiStandardResponse,
             types::PaymentsCaptureData,
             types::PaymentsResponseData,
         >,
@@ -245,7 +245,7 @@ impl
     fn try_from(
         item: types::ResponseRouterData<
             api::Capture,
-            StandardResponse,
+            NmiStandardResponse,
             types::PaymentsCaptureData,
             types::PaymentsResponseData,
         >,
@@ -313,7 +313,7 @@ pub enum Response {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct StandardResponse {
+pub struct NmiStandardResponse {
     pub response: Response,
     pub responsetext: String,
     pub authcode: Option<String>,
@@ -324,16 +324,30 @@ pub struct StandardResponse {
     pub response_code: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct WebhookEventBody {
+    pub transaction_id: String,
+    pub responsetext: String,
+    pub response_code: String,
+    pub order_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct NmiWebhookResponse {
+    pub event_type: String,
+    pub event_body: serde_json::Value,
+}
+
 impl<T>
     TryFrom<
-        types::ResponseRouterData<api::Verify, StandardResponse, T, types::PaymentsResponseData>,
+        types::ResponseRouterData<api::Verify, NmiStandardResponse, T, types::PaymentsResponseData>,
     > for types::RouterData<api::Verify, T, types::PaymentsResponseData>
 {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
         item: types::ResponseRouterData<
             api::Verify,
-            StandardResponse,
+            NmiStandardResponse,
             T,
             types::PaymentsResponseData,
         >,
@@ -368,61 +382,14 @@ impl<T>
     }
 }
 
-// PaymentsResponse
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum NmiResponseStatus {
-    Succeeded,
-    Failed,
-    #[default]
-    Processing,
-}
-
-impl From<NmiResponseStatus> for enums::AttemptStatus {
-    fn from(item: NmiResponseStatus) -> Self {
-        match item {
-            NmiResponseStatus::Succeeded => Self::Charged,
-            NmiResponseStatus::Failed => Self::Failure,
-            NmiResponseStatus::Processing => Self::Authorizing,
-        }
-    }
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct NmiPaymentsResponse {
-    status: NmiResponseStatus,
-    id: String,
-}
-
-impl<F, T>
-    TryFrom<types::ResponseRouterData<F, NmiPaymentsResponse, T, types::PaymentsResponseData>>
-    for types::RouterData<F, T, types::PaymentsResponseData>
-{
-    type Error = error_stack::Report<errors::ConnectorError>;
-    fn try_from(
-        item: types::ResponseRouterData<F, NmiPaymentsResponse, T, types::PaymentsResponseData>,
-    ) -> Result<Self, Self::Error> {
-        Ok(Self {
-            status: enums::AttemptStatus::from(item.response.status),
-            response: Ok(types::PaymentsResponseData::TransactionResponse {
-                resource_id: types::ResponseId::ConnectorTransactionId(item.response.id),
-                redirection_data: None,
-                mandate_reference: None,
-                connector_metadata: None,
-            }),
-            ..item.data
-        })
-    }
-}
-
-impl TryFrom<types::PaymentsResponseRouterData<StandardResponse>>
+impl TryFrom<types::PaymentsResponseRouterData<NmiStandardResponse>>
     for types::RouterData<api::Authorize, types::PaymentsAuthorizeData, types::PaymentsResponseData>
 {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
         item: types::ResponseRouterData<
             api::Authorize,
-            StandardResponse,
+            NmiStandardResponse,
             types::PaymentsAuthorizeData,
             types::PaymentsResponseData,
         >,
@@ -464,14 +431,14 @@ impl TryFrom<types::PaymentsResponseRouterData<StandardResponse>>
 }
 
 impl<T>
-    TryFrom<types::ResponseRouterData<api::Void, StandardResponse, T, types::PaymentsResponseData>>
+    TryFrom<types::ResponseRouterData<api::Void, NmiStandardResponse, T, types::PaymentsResponseData>>
     for types::RouterData<api::Void, T, types::PaymentsResponseData>
 {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
         item: types::ResponseRouterData<
             api::Void,
-            StandardResponse,
+            NmiStandardResponse,
             T,
             types::PaymentsResponseData,
         >,
@@ -601,12 +568,12 @@ impl<F> TryFrom<&types::RefundsRouterData<F>> for NmiRefundRequest {
     }
 }
 
-impl TryFrom<types::RefundsResponseRouterData<api::Execute, StandardResponse>>
+impl TryFrom<types::RefundsResponseRouterData<api::Execute, NmiStandardResponse>>
     for types::RefundsRouterData<api::Execute>
 {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
-        item: types::RefundsResponseRouterData<api::Execute, StandardResponse>,
+        item: types::RefundsResponseRouterData<api::Execute, NmiStandardResponse>,
     ) -> Result<Self, Self::Error> {
         let refund_status = enums::RefundStatus::from(item.response.response);
         Ok(Self {
@@ -619,12 +586,12 @@ impl TryFrom<types::RefundsResponseRouterData<api::Execute, StandardResponse>>
     }
 }
 
-impl TryFrom<types::RefundsResponseRouterData<api::Capture, StandardResponse>>
+impl TryFrom<types::RefundsResponseRouterData<api::Capture, NmiStandardResponse>>
     for types::RefundsRouterData<api::Capture>
 {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
-        item: types::RefundsResponseRouterData<api::Capture, StandardResponse>,
+        item: types::RefundsResponseRouterData<api::Capture, NmiStandardResponse>,
     ) -> Result<Self, Self::Error> {
         let refund_status = enums::RefundStatus::from(item.response.response);
         Ok(Self {
@@ -771,21 +738,7 @@ pub struct NmiWebhookDataId {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct NmiWebhookObjectId {
-    pub data: NmiWebhookDataId,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct NmiWebhookObjectEventType {
     pub event_type: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct NmiWebhookDataResource {
-    pub object: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NmiWebhookResourceObjectData {
-    pub data: NmiWebhookDataResource,
-}
