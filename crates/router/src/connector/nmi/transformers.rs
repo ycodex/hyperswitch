@@ -312,6 +312,13 @@ pub enum Response {
     Error,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum NmiPaymentsResponse {
+    NmiStandardResponse(NmiStandardResponse),
+    NmiWebhookResponse(NmiWebhookResponse),
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct NmiStandardResponse {
     pub response: Response,
@@ -327,15 +334,12 @@ pub struct NmiStandardResponse {
 #[derive(Clone, Debug, Deserialize)]
 pub struct WebhookEventBody {
     pub transaction_id: String,
-    pub responsetext: String,
-    pub response_code: String,
-    pub order_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct NmiWebhookResponse {
-    pub event_type: String,
-    pub event_body: serde_json::Value,
+    pub event_type: WebhookEventType,
+    pub event_body: WebhookEventBody,
 }
 
 impl<T>
@@ -380,6 +384,12 @@ impl<T>
             ..item.data
         })
     }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub enum WebhookEventType {
+    #[serde(rename = "transaction.sale.success")]
+    TransactionSaleSuccess,
 }
 
 impl TryFrom<types::PaymentsResponseRouterData<NmiStandardResponse>>
@@ -431,8 +441,9 @@ impl TryFrom<types::PaymentsResponseRouterData<NmiStandardResponse>>
 }
 
 impl<T>
-    TryFrom<types::ResponseRouterData<api::Void, NmiStandardResponse, T, types::PaymentsResponseData>>
-    for types::RouterData<api::Void, T, types::PaymentsResponseData>
+    TryFrom<
+        types::ResponseRouterData<api::Void, NmiStandardResponse, T, types::PaymentsResponseData>,
+    > for types::RouterData<api::Void, T, types::PaymentsResponseData>
 {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
@@ -524,6 +535,63 @@ impl TryFrom<types::PaymentsSyncResponseRouterData<types::Response>>
             }),
             ..item.data
         })
+        // This code needs to be modified to handle responses after XML parsing support has been added to the core.
+        // let status = match item.response {
+        //     NmiPaymentsResponse::NmiStandardResponse(response) => {
+        //         let (response, status) = match response.response {
+        //                 Response::Approved => (
+        //                     Ok(types::PaymentsResponseData::TransactionResponse {
+        //                         resource_id: types::ResponseId::ConnectorTransactionId(
+        //                             response.transactionid,
+        //                         ),
+        //                         redirection_data: None,
+        //                         mandate_reference: None,
+        //                         connector_metadata: None,
+        //                     }),
+        //                     if let Some(storage_models::enums::CaptureMethod::Automatic) =
+        //                         item.data.request.capture_method
+        //                     {
+        //                         enums::AttemptStatus::CaptureInitiated
+        //                     } else {
+        //                         enums::AttemptStatus::Authorizing
+        //                     },
+        //                 ),
+        //                 Response::Declined | Response::Error => (
+        //                     Err(types::ErrorResponse {
+        //                         code: response.response_code,
+        //                         message: response.responsetext,
+        //                         reason: None,
+        //                         status_code: item.http_code,
+        //                     }),
+        //                     enums::AttemptStatus::Failure,
+        //                 ),
+        //             };
+
+        //         Ok(Self {
+        //             status,
+        //             response,
+        //             ..item.data
+        //         })
+        //     }
+        //     NmiPaymentsResponse::NmiWebhookResponse(response) => {
+        //         let status = match response.event_type {
+        //             WebhookEventType::TransactionSaleSuccess => storage_models::enums::AttemptStatus::Charged,
+        //         };
+        //         let response = Ok(types::PaymentsResponseData::TransactionResponse {
+        //             resource_id: types::ResponseId::ConnectorTransactionId(
+        //                 response.event_body.transaction_id,
+        //             ),
+        //             redirection_data: None,
+        //             mandate_reference: None,
+        //             connector_metadata: None,
+        //         });
+        //         Ok(Self {
+        //             status,
+        //             response,
+        //             ..item.data
+        //         })
+        //     }
+        // };
     }
 }
 
@@ -741,4 +809,3 @@ pub struct NmiWebhookDataId {
 pub struct NmiWebhookObjectEventType {
     pub event_type: String,
 }
-
