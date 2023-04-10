@@ -1374,7 +1374,7 @@ pub struct ApplePaySessionResponse {
 #[derive(Debug, Clone, serde::Serialize, ToSchema, serde::Deserialize)]
 pub struct ApplePayPaymentRequest {
     /// The code for country
-    #[schema(value_type = Country)]
+    #[schema(value_type = CountryCode)]
     pub country_code: api_enums::CountryCode,
     /// The code for currency
     pub currency_code: String,

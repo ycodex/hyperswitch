@@ -841,8 +841,10 @@ pub async fn list_payment_methods(
 
     logger::debug!(mca_before_filtering=?all_mcas);
 
+    let filtered_mcas = filter_mca_based_on_business_details(all_mcas, payment_intent.as_ref());
+
     let mut response: Vec<ResponsePaymentMethodIntermediate> = vec![];
-    for mca in all_mcas {
+    for mca in filtered_mcas {
         let payment_methods = match mca.payment_methods_enabled {
             Some(pm) => pm,
             None => continue,
@@ -1051,6 +1053,25 @@ pub async fn list_payment_methods(
                 payment_methods: payment_method_responses,
             },
         )))
+}
+
+fn filter_mca_based_on_business_details(
+    merchant_connector_accounts: Vec<
+        storage_models::merchant_connector_account::MerchantConnectorAccount,
+    >,
+    payment_intent: Option<&storage_models::payment_intent::PaymentIntent>,
+) -> Vec<storage_models::merchant_connector_account::MerchantConnectorAccount> {
+    if let Some(payment_intent) = payment_intent {
+        merchant_connector_accounts
+            .into_iter()
+            .filter(|mca| {
+                mca.business_country == payment_intent.business_country
+                    && mca.business_label == payment_intent.business_label
+            })
+            .collect::<Vec<_>>()
+    } else {
+        merchant_connector_accounts
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

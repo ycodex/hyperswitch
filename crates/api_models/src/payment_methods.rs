@@ -283,7 +283,7 @@ pub struct PaymentMethodListRequest {
     pub client_secret: Option<String>,
 
     /// The two-letter ISO currency code
-    #[schema(value_type = Option<Vec<Country>>, example = json!(["US", "UK", "IN"]))]
+    #[schema(value_type = Option<Vec<CountryCode>>, example = json!(["US", "UK", "IN"]))]
     pub accepted_countries: Option<Vec<api_enums::CountryCode>>,
 
     /// The three-letter ISO currency code
