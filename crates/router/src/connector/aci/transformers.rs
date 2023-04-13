@@ -2,11 +2,13 @@ use std::str::FromStr;
 
 use error_stack::report;
 use masking::Secret;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 use super::result_codes::{FAILURE_CODES, PENDING_CODES, SUCCESSFUL_CODES};
 use crate::{
     core::errors,
+    services,
     types::{self, api, storage::enums},
 };
 
@@ -38,6 +40,30 @@ pub struct AciPaymentsRequest {
     pub payment_type: AciPaymentType,
     #[serde(flatten)]
     pub payment_method: PaymentDetails,
+    #[serde(flatten)]
+    pub browser_info: Option<AciBrowserInfo>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+pub struct AciBrowserInfo {
+    #[serde(rename = "customer.browser.acceptHeader")]
+    accept_header: String,
+    #[serde(rename = "customer.browser.screenColorDepth")]
+    color_depth: u8,
+    #[serde(rename = "customer.browser.language")]
+    language: String,
+    #[serde(rename = "customer.browser.screenHeight")]
+    screen_height: u32,
+    #[serde(rename = "customer.browser.screenWidth")]
+    screen_width: u32,
+    #[serde(rename = "customer.browser.timezone")]
+    timezone_offset: i32,
+    #[serde(rename = "customer.browser.userAgent")]
+    user_agent: String,
+    #[serde(rename = "customer.browser.javaEnabled")]
+    java_enabled: bool,
+    #[serde(rename = "customer.browser.javascriptEnabled")]
+    java_script_enabled: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -97,6 +123,27 @@ pub enum AciPaymentType {
     Refund,
 }
 
+fn get_browser_info(item: &types::PaymentsAuthorizeRouterData) -> Option<AciBrowserInfo> {
+    if matches!(item.auth_type, enums::AuthenticationType::ThreeDs) {
+        item.request
+            .browser_info
+            .as_ref()
+            .map(|info| AciBrowserInfo {
+                accept_header: info.accept_header.clone(),
+                language: info.language.clone(),
+                screen_height: info.screen_height,
+                screen_width: info.screen_width,
+                color_depth: info.color_depth,
+                user_agent: info.user_agent.clone(),
+                timezone_offset: info.time_zone,
+                java_enabled: info.java_enabled,
+                java_script_enabled: info.java_script_enabled,
+            })
+    } else {
+        None
+    }
+}
+
 impl TryFrom<&types::PaymentsAuthorizeRouterData> for AciPaymentsRequest {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(item: &types::PaymentsAuthorizeRouterData) -> Result<Self, Self::Error> {
@@ -112,16 +159,19 @@ impl TryFrom<&types::PaymentsAuthorizeRouterData> for AciPaymentsRequest {
             api::PaymentMethodData::Wallet(_) => PaymentDetails::Wallet,
             api::PaymentMethodData::BankRedirect(_) => PaymentDetails::BankRedirect,
         };
-
+        let browser_data = match item.auth_type {
+            enums::AuthenticationType::ThreeDs => get_browser_info(item),
+            enums::AuthenticationType::NoThreeDs => None,
+        };
         let auth = AciAuthType::try_from(&item.connector_auth_type)?;
-        let aci_payment_request = Self {
+        Ok(Self {
             payment_method: payment_details,
             entity_id: auth.entity_id,
             amount: item.request.amount,
             currency: item.request.currency.to_string(),
             payment_type: AciPaymentType::Debit,
-        };
-        Ok(aci_payment_request)
+            browser_info: browser_data,
+        })
     }
 }
 
@@ -172,7 +222,7 @@ impl FromStr for AciPaymentStatus {
     }
 }
 
-#[derive(Default, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AciPaymentsResponse {
     id: String,
@@ -181,6 +231,22 @@ pub struct AciPaymentsResponse {
     timestamp: String,
     build_number: String,
     pub(super) result: ResultCode,
+    pub(super) redirect: Option<AciRedirectionData>,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AciRedirectionData {
+    url: Url,
+    parameters: RedirectionParameters,
+    data: Option<std::collections::HashMap<String, String>>,
+    method: services::Method,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+pub struct RedirectionParameters {
+    name: String,
+    value: String,
 }
 
 #[derive(Default, Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -206,13 +272,17 @@ impl<F, T>
     fn try_from(
         item: types::ResponseRouterData<F, AciPaymentsResponse, T, types::PaymentsResponseData>,
     ) -> Result<Self, Self::Error> {
+        let redirection_data = item.response.redirect.map(|redirection_data| {
+            services::RedirectForm::from((redirection_data.url, redirection_data.method))
+        });
+        println!("-----> {:#?}", redirection_data);
         Ok(Self {
             status: enums::AttemptStatus::from(AciPaymentStatus::from_str(
                 &item.response.result.code,
             )?),
             response: Ok(types::PaymentsResponseData::TransactionResponse {
                 resource_id: types::ResponseId::ConnectorTransactionId(item.response.id),
-                redirection_data: None,
+                redirection_data,
                 mandate_reference: None,
                 connector_metadata: None,
             }),

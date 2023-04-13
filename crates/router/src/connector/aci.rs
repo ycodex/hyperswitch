@@ -226,6 +226,7 @@ impl
         _req: &types::PaymentsAuthorizeRouterData,
         connectors: &settings::Connectors,
     ) -> CustomResult<String, errors::ConnectorError> {
+        // For standalone 3DS, we can also use v1/threeDSecure as the end-point
         Ok(format!("{}{}", self.base_url(connectors), "v1/payments"))
     }
 
