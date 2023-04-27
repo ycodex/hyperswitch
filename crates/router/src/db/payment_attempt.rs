@@ -329,6 +329,8 @@ mod storage {
     use redis_interface::HsetnxReply;
     use storage_models::reverse_lookup::ReverseLookup;
 
+    use router_env::tracing::{self, instrument};
+
     use super::PaymentAttemptInterface;
     use crate::{
         connection,
@@ -574,6 +576,7 @@ mod storage {
             }
         }
 
+        #[instrument(skip_all)]
         async fn find_payment_attempt_last_successful_attempt_by_payment_id_merchant_id(
             &self,
             payment_id: &str,
