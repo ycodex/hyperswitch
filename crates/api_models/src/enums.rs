@@ -592,6 +592,7 @@ pub enum Connector {
     Cybersource,
     #[default]
     Dummy,
+    Opayo,
     Opennode,
     Bambora,
     Dlocal,
@@ -661,6 +662,7 @@ pub enum RoutableConnectors {
     Multisafepay,
     // Nexinets, added as template code for future use
     Nuvei,
+    Opayo,
     Opennode,
     // Payeezy, As psync and rsync are not supported by this connector, it is added as template code for future usage
     Paypal,

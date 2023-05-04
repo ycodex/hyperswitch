@@ -300,6 +300,7 @@ pub struct Connectors {
     pub multisafepay: ConnectorParams,
     pub nexinets: ConnectorParams,
     pub nuvei: ConnectorParams,
+    pub opayo: ConnectorParams,
     pub opennode: ConnectorParams,
     pub payeezy: ConnectorParams,
     pub paypal: ConnectorParams,

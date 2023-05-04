@@ -381,6 +381,10 @@ pub async fn add_payment_method_token<F: Clone>(
                 types::PaymentMethodTokenizationData,
                 types::PaymentsResponseData,
             > = connector.connector.get_connector_integration();
+            connector_integration
+                    .execute_pretasks(router_data, state)
+                    .await
+                    .map_err(|error| error.to_payment_failed_response())?;
 
             let pm_token_response_data: Result<types::PaymentsResponseData, types::ErrorResponse> =
                 Err(types::ErrorResponse::default());
@@ -400,6 +404,7 @@ pub async fn add_payment_method_token<F: Clone>(
                 pm_token_request_data,
                 pm_token_response_data,
             );
+
             let resp = services::execute_connector_processing_step(
                 state,
                 connector_integration,

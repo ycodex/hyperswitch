@@ -19,6 +19,7 @@ mod multisafepay;
 mod nexinets;
 mod nuvei;
 mod nuvei_ui;
+mod opayo;
 mod opennode;
 mod payeezy;
 mod paypal;

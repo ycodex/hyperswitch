@@ -93,3 +93,7 @@ key1 = "key1"
 api_key = "api_key"
 key1 = "key1"
 api_secret = "secret"
+
+[opayo]
+api_key="API Key"
+api_secret = "api_secret"
