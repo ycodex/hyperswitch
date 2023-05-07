@@ -296,6 +296,15 @@ pub enum StripePaymentMethodData {
 pub enum StripeWallet {
     ApplepayToken(StripeApplePay),
     ApplepayPayment(ApplepayPayment),
+    CashappPayment(CashappPayment)
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+pub struct CashappPayment {
+    #[serde(rename = "payment_method_data[type]")]
+    pub payment_method_data_type: StripePaymentMethodType,
+    #[serde(rename = "payment_method_types[]")]
+    pub payment_method_types: StripePaymentMethodType,
 }
 
 #[derive(Debug, Eq, PartialEq, Serialize)]
@@ -334,6 +343,7 @@ pub enum StripePaymentMethodType {
     Becs,
     #[serde(rename = "bacs_debit")]
     Bacs,
+    Cashapp,
 }
 
 #[derive(Debug, Eq, PartialEq, Serialize, Clone)]
@@ -787,6 +797,15 @@ fn create_stripe_payment_method(
                     pk_token_transaction_id: applepay_data.transaction_identifier.to_owned(),
                 })),
                 StripePaymentMethodType::ApplePay,
+                StripeBillingAddress::default(),
+            )),
+
+            payments::WalletData::Cashapp(_) => Ok((
+                StripePaymentMethodData::Wallet(StripeWallet::CashappPayment(CashappPayment {
+                    payment_method_data_type: StripePaymentMethodType::Cashapp,
+                    payment_method_types: StripePaymentMethodType::Cashapp,
+                })),
+                StripePaymentMethodType::Cashapp,
                 StripeBillingAddress::default(),
             )),
             _ => Err(errors::ConnectorError::NotImplemented(
@@ -1254,7 +1273,8 @@ impl<F, T>
                     | StripePaymentMethodOptions::Ach {}
                     | StripePaymentMethodOptions::Bacs {}
                     | StripePaymentMethodOptions::Becs {}
-                    | StripePaymentMethodOptions::Sepa {} => None,
+                    | StripePaymentMethodOptions::Sepa {} 
+                    | StripePaymentMethodOptions::Cashapp {} => None,
                 });
 
         let error_res =
@@ -1331,12 +1351,14 @@ impl<F, T>
 pub enum StripeNextActionResponse {
     RedirectToUrl(StripeRedirectToUrlResponse),
     VerifyWithMicrodeposits(StripeVerifyWithMicroDepositsResponse),
+    CashappHandleRedirectOrDisplayQrCode(StripeCashappRedirectToUrlResponse),
 }
 
 impl StripeNextActionResponse {
     fn get_url(&self) -> Url {
         match self {
             Self::RedirectToUrl(redirect_to_url) => redirect_to_url.url.to_owned(),
+            Self::CashappHandleRedirectOrDisplayQrCode(redirect_to_url) => redirect_to_url.mobile_auth_url.to_owned(),
             Self::VerifyWithMicrodeposits(verify_with_microdeposits) => {
                 verify_with_microdeposits.hosted_verification_url.to_owned()
             }
@@ -1368,6 +1390,11 @@ impl<'de> Deserialize<'de> for StripeNextActionResponse {
 pub struct StripeRedirectToUrlResponse {
     return_url: String,
     url: Url,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct StripeCashappRedirectToUrlResponse {
+    mobile_auth_url: Url,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
@@ -1574,6 +1601,7 @@ pub enum StripePaymentMethodOptions {
     Becs {},
     #[serde(rename = "bacs_debit")]
     Bacs {},
+    Cashapp {}
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

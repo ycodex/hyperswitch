@@ -441,6 +441,7 @@ pub enum PaymentMethodType {
     Trustly,
     Walley,
     WeChatPay,
+    Cashapp,
 }
 
 #[derive(
