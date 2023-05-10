@@ -1300,7 +1300,8 @@ impl ForeignFrom<(Option<StripePaymentMethodOptions>, String)> for types::Mandat
                 | StripePaymentMethodOptions::Becs {}
                 | StripePaymentMethodOptions::WechatPay {}
                 | StripePaymentMethodOptions::Alipay {}
-                | StripePaymentMethodOptions::Sepa {} => None,
+                | StripePaymentMethodOptions::Sepa {} 
+                | StripePaymentMethodOptions::Cashapp{} => None,
             }),
             payment_method_id: Some(payment_method_id),
         }
