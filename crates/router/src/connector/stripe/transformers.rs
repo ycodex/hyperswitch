@@ -300,7 +300,7 @@ pub enum StripeWallet {
     ApplepayPayment(ApplepayPayment),
     WechatpayPayment(WechatpayPayment),
     AlipayPayment(AlipayPayment),
-    CashappPayment(CashappPayment)
+    CashappPayment(CashappPayment),
 }
 
 #[derive(Debug, Eq, PartialEq, Serialize)]
@@ -1300,8 +1300,8 @@ impl ForeignFrom<(Option<StripePaymentMethodOptions>, String)> for types::Mandat
                 | StripePaymentMethodOptions::Becs {}
                 | StripePaymentMethodOptions::WechatPay {}
                 | StripePaymentMethodOptions::Alipay {}
-                | StripePaymentMethodOptions::Sepa {} 
-                | StripePaymentMethodOptions::Cashapp{} => None,
+                | StripePaymentMethodOptions::Sepa {}
+                | StripePaymentMethodOptions::Cashapp {} => None,
             }),
             payment_method_id: Some(payment_method_id),
         }
@@ -1472,7 +1472,9 @@ impl StripeNextActionResponse {
                 redirect_to_url.url.to_owned()
             }
             Self::WechatPayDisplayQrCode(redirect_to_url) => redirect_to_url.data.to_owned(),
-            Self::CashappHandleRedirectOrDisplayQrCode(redirect_to_url) => redirect_to_url.mobile_auth_url.to_owned(),
+            Self::CashappHandleRedirectOrDisplayQrCode(redirect_to_url) => {
+                redirect_to_url.mobile_auth_url.to_owned()
+            }
             Self::VerifyWithMicrodeposits(verify_with_microdeposits) => {
                 verify_with_microdeposits.hosted_verification_url.to_owned()
             }
@@ -1722,7 +1724,7 @@ pub enum StripePaymentMethodOptions {
     Bacs {},
     WechatPay {},
     Alipay {},
-    Cashapp {}
+    Cashapp {},
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
