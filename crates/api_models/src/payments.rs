@@ -711,7 +711,7 @@ pub enum WalletData {
     PaypalSdk(PayPalWalletData),
     /// The wallet data for WeChat Pay Redirection
     WeChatPayRedirect(Box<WeChatPayRedirection>),
-    //Thw wallet data for Cashapp
+    //The wallet data for Cashapp
     Cashapp(Box<CashAppRedirection>),
 }
 
