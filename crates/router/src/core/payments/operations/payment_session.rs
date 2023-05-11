@@ -357,7 +357,6 @@ where
                                 (
                                     connector_account.connector_name.to_owned(),
                                     payment_method_type.payment_method_type,
-                                    connector_account.business_sub_label.to_owned(),
                                 )
                             })
                             .collect::<Vec<_>>()
@@ -369,9 +368,7 @@ where
         let mut session_connector_data =
             Vec::with_capacity(connector_and_supporting_payment_method_type.len());
 
-        for (connector, payment_method_type, business_sub_label) in
-            connector_and_supporting_payment_method_type
-        {
+        for (connector, payment_method_type) in connector_and_supporting_payment_method_type {
             match api::ConnectorData::get_connector_by_name(
                 connectors,
                 &connector,
@@ -380,7 +377,7 @@ where
                 Ok(connector_data) => session_connector_data.push(api::SessionConnectorData {
                     payment_method_type,
                     connector: connector_data,
-                    business_sub_label,
+                    business_sub_label: None,
                 }),
                 Err(error) => {
                     logger::error!(session_token_error=?error)

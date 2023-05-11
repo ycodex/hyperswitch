@@ -558,9 +558,11 @@ where
     let call_connectors_start_time = Instant::now();
     let mut join_handlers = Vec::with_capacity(connectors.len());
 
+    let original_sub_label = payment_data.payment_attempt.business_sub_label.clone();
     for session_connector_data in connectors.iter() {
         let connector_id = session_connector_data.connector.connector.id();
-
+        payment_data.payment_attempt.business_sub_label =
+            session_connector_data.business_sub_label.clone();
         let router_data = payment_data
             .construct_router_data(state, connector_id, merchant_account, customer)
             .await?;
@@ -575,6 +577,7 @@ where
 
         join_handlers.push(res);
     }
+    payment_data.payment_attempt.business_sub_label = original_sub_label;
 
     let result = join_all(join_handlers).await;
 
