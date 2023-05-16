@@ -381,8 +381,12 @@ pub async fn add_payment_method_token<F: Clone>(
                 types::PaymentMethodTokenizationData,
                 types::PaymentsResponseData,
             > = connector.connector.get_connector_integration();
+            let mut tokenization_data = types::TokenizationRouterData::from((
+                router_data,
+                types::PaymentMethodTokenizationData::from(router_data)
+            ));
             connector_integration
-                    .execute_pretasks(router_data, state)
+                    .execute_pretasks( &mut tokenization_data, state)
                     .await
                     .map_err(|error| error.to_payment_failed_response())?;
 

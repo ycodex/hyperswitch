@@ -483,6 +483,14 @@ impl From<&&mut PaymentsAuthorizeRouterData> for AuthorizeSessionTokenData {
     }
 }
 
+impl<F> From<&RouterData<F, PaymentsAuthorizeData, PaymentsResponseData>> for PaymentMethodTokenizationData {
+    fn from(data: &RouterData<F, PaymentsAuthorizeData, PaymentsResponseData>) -> Self {
+        Self {
+            payment_method_data: data.request.payment_method_data.clone(),
+        }
+    }
+}
+
 impl From<&&mut TokenizationRouterData> for AuthorizeSessionTokenData {
     fn from(data: &&mut TokenizationRouterData) -> Self {
         Self {
@@ -498,6 +506,38 @@ impl<F1, F2, T1, T2> From<(&&mut RouterData<F1, T1, PaymentsResponseData>, T2)>
     for RouterData<F2, T2, PaymentsResponseData>
 {
     fn from(item: (&&mut RouterData<F1, T1, PaymentsResponseData>, T2)) -> Self {
+        let data = item.0;
+        let request = item.1;
+        Self {
+            flow: PhantomData,
+            request,
+            merchant_id: data.merchant_id.clone(),
+            connector: data.connector.clone(),
+            attempt_id: data.attempt_id.clone(),
+            status: data.status,
+            payment_method: data.payment_method,
+            connector_auth_type: data.connector_auth_type.clone(),
+            description: data.description.clone(),
+            return_url: data.return_url.clone(),
+            address: data.address.clone(),
+            auth_type: data.auth_type,
+            connector_meta_data: data.connector_meta_data.clone(),
+            amount_captured: data.amount_captured,
+            access_token: data.access_token.clone(),
+            response: data.response.clone(),
+            payment_method_id: data.payment_method_id.clone(),
+            payment_id: data.payment_id.clone(),
+            session_token: data.session_token.clone(),
+            reference_id: data.reference_id.clone(),
+            payment_method_token: None,
+        }
+    }
+}
+
+impl<F1, F2, T1, T2> From<( &RouterData<F1, T1, PaymentsResponseData>, T2)>
+    for RouterData<F2, T2, PaymentsResponseData>
+{
+    fn from(item: ( &RouterData<F1, T1, PaymentsResponseData>, T2)) -> Self {
         let data = item.0;
         let request = item.1;
         Self {
