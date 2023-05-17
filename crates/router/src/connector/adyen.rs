@@ -641,12 +641,16 @@ impl services::ConnectorIntegration<api::PFulfill, types::PayoutsData, types::Pa
 {
     fn get_url(
         &self,
-        _req: &types::PayoutsRouterData<api::PFulfill>,
+        req: &types::PayoutsRouterData<api::PFulfill>,
         connectors: &settings::Connectors,
     ) -> CustomResult<String, errors::ConnectorError> {
         Ok(format!(
-            "{}pal/servlet/Payout/v68/payout",
-            connectors.adyen.secondary_base_url
+            "{}pal/servlet/Payout/v68/{}",
+            connectors.adyen.secondary_base_url,
+            match req.request.payout_type {
+                storage_enums::PayoutType::Bank => "confirmThirdParty".to_string(),
+                storage_enums::PayoutType::Card => "payout".to_string(),
+            }
         ))
     }
 
@@ -659,7 +663,15 @@ impl services::ConnectorIntegration<api::PFulfill, types::PayoutsData, types::Pa
             headers::CONTENT_TYPE.to_string(),
             types::PayoutFulfillType::get_content_type(self).to_string(),
         )];
-        let mut api_key = self.get_auth_header(&req.connector_auth_type)?;
+        let auth = adyen::AdyenAuthType::try_from(&req.connector_auth_type)
+            .change_context(errors::ConnectorError::FailedToObtainAuthType)?;
+        let mut api_key = vec![(
+            headers::X_API_KEY.to_string(),
+            match req.request.payout_type {
+                storage_enums::PayoutType::Bank => auth.review_key.unwrap_or(auth.api_key),
+                storage_enums::PayoutType::Card => auth.api_key,
+            },
+        )];
         header.append(&mut api_key);
         Ok(header)
     }

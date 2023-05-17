@@ -47,10 +47,10 @@ pub async fn make_payout_method_data<'a>(
             )?;
             Ok(pm)
         }
-        (Some(payout_method), None) => {
+        (Some(payout_method), payout_token) => {
             let payout_token = vault::Vault::store_payout_method_data_in_locker(
                 state,
-                None,
+                payout_token,
                 &payout_method,
                 Some(payout_create.customer_id.to_owned()),
             )

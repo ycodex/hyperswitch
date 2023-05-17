@@ -609,6 +609,7 @@ pub struct AdyenRefundResponse {
 pub struct AdyenAuthType {
     pub(super) api_key: String,
     pub(super) merchant_account: String,
+    pub(super) review_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -714,13 +715,23 @@ impl<'a> TryFrom<&api_enums::BankNames> for AdyenTestBankNames<'a> {
 impl TryFrom<&types::ConnectorAuthType> for AdyenAuthType {
     type Error = Error;
     fn try_from(auth_type: &types::ConnectorAuthType) -> Result<Self, Self::Error> {
-        if let types::ConnectorAuthType::BodyKey { api_key, key1 } = auth_type {
-            Ok(Self {
+        match auth_type {
+            types::ConnectorAuthType::BodyKey { api_key, key1 } => Ok(Self {
                 api_key: api_key.to_string(),
                 merchant_account: key1.to_string(),
-            })
-        } else {
-            Err(errors::ConnectorError::FailedToObtainAuthType)?
+                review_key: None,
+            }),
+            types::ConnectorAuthType::MultiAuthKey {
+                api_key,
+                key1,
+                api_secret: _,
+                key2,
+            } => Ok(Self {
+                api_key: api_key.to_string(),
+                merchant_account: key1.to_string(),
+                review_key: Some(key2.to_string()),
+            }),
+            _ => Err(errors::ConnectorError::FailedToObtainAuthType)?,
         }
     }
 }
@@ -1878,7 +1889,8 @@ impl From<AdyenNotificationRequestItemWH> for AdyenResponse {
 #[serde(rename_all = "camelCase")]
 pub struct AdyenPayoutResponse {
     psp_reference: String,
-    result_code: AdyenStatus,
+    result_code: Option<AdyenStatus>,
+    response: Option<AdyenStatus>,
     amount: Option<Amount>,
     merchant_reference: Option<String>,
     refusal_reason: Option<String>,
@@ -2027,18 +2039,19 @@ impl<F> TryFrom<types::PayoutsResponseRouterData<F, AdyenPayoutResponse>>
             .map(|pe| pe == PayoutEligibility::Y || pe == PayoutEligibility::D);
 
         let status = payout_eligible.map_or(
-            match response.result_code {
-                AdyenStatus::Authorised => storage_enums::PayoutStatus::Success,
-                AdyenStatus::Cancelled => storage_enums::PayoutStatus::Cancelled,
-                AdyenStatus::Error => storage_enums::PayoutStatus::Failed,
-                AdyenStatus::Pending => storage_enums::PayoutStatus::Pending,
-                _ => storage_enums::PayoutStatus::Ineligible,
+            {
+                response.result_code.map_or(
+                    response
+                        .response
+                        .map(storage_enums::PayoutStatus::foreign_from),
+                    |rc| Some(storage_enums::PayoutStatus::foreign_from(rc)),
+                )
             },
             |pe| {
                 if pe {
-                    storage_enums::PayoutStatus::RequiresCreation
+                    Some(storage_enums::PayoutStatus::RequiresCreation)
                 } else {
-                    storage_enums::PayoutStatus::Ineligible
+                    Some(storage_enums::PayoutStatus::Ineligible)
                 }
             },
         );
@@ -2051,5 +2064,18 @@ impl<F> TryFrom<types::PayoutsResponseRouterData<F, AdyenPayoutResponse>>
             }),
             ..item.data
         })
+    }
+}
+
+impl ForeignFrom<AdyenStatus> for storage_enums::PayoutStatus {
+    fn foreign_from(adyen_status: AdyenStatus) -> Self {
+        match adyen_status {
+            AdyenStatus::Authorised | AdyenStatus::PayoutConfirmReceived => Self::Success,
+            AdyenStatus::Cancelled | AdyenStatus::PayoutDeclineReceived => Self::Cancelled,
+            AdyenStatus::Error => Self::Failed,
+            AdyenStatus::Pending => Self::Pending,
+            AdyenStatus::PayoutSubmitReceived => Self::RequiresFulfillment,
+            _ => Self::Ineligible,
+        }
     }
 }
