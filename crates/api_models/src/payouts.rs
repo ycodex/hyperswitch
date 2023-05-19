@@ -1,3 +1,4 @@
+use cards::CardNumber;
 use common_utils::pii::{self, Email};
 use masking::Secret;
 use serde::{Deserialize, Serialize};
@@ -133,7 +134,7 @@ impl Default for PayoutMethodData {
 pub struct Card {
     /// The card number
     #[schema(value_type = String, example = "4242424242424242")]
-    pub card_number: Secret<String, pii::CardNumber>,
+    pub card_number: CardNumber,
 
     /// The card's expiry month
     #[schema(value_type = String)]

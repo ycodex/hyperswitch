@@ -14,6 +14,7 @@ use error_stack::{IntoReport, ResultExt};
 use futures::future::join_all;
 use masking::Secret;
 use router_env::{instrument, tracing};
+use storage_models::ephemeral_key;
 use time;
 
 pub use self::operations::{
@@ -78,7 +79,6 @@ where
         .validate_request(&req, &merchant_account)?;
 
     tracing::Span::current().record("payment_id", &format!("{}", validate_result.payment_id));
-
     let (operation, mut payment_data, customer_details) = operation
         .to_get_tracker()?
         .get_trackers(
@@ -89,6 +89,7 @@ where
             &merchant_account,
         )
         .await?;
+
     authenticate_client_secret(
         req.get_client_secret(),
         &payment_data.payment_intent,
@@ -120,16 +121,9 @@ where
         get_connector_tokenization_action(state, &operation, payment_data, &validate_result)
             .await?;
 
-    let connector_string = connector
-        .as_ref()
-        .and_then(|connector_type| match connector_type {
-            api::ConnectorCallType::Single(connector) => Some(connector.connector_name.to_string()),
-            _ => None,
-        });
-
-    let updated_customer = call_create_connector_customer(
+    let updated_customer = call_create_connector_customer_if_required(
         state,
-        &connector_string,
+        &payment_data.payment_attempt.connector.clone(),
         &customer,
         &merchant_account,
         &mut payment_data,
@@ -543,7 +537,7 @@ where
 pub async fn call_multiple_connectors_service<F, Op, Req>(
     state: &AppState,
     merchant_account: &storage::MerchantAccount,
-    connectors: Vec<api::ConnectorData>,
+    connectors: Vec<api::SessionConnectorData>,
     _operation: &Op,
     mut payment_data: PaymentData<F>,
     customer: &Option<storage::Customer>,
@@ -565,15 +559,16 @@ where
     let call_connectors_start_time = Instant::now();
     let mut join_handlers = Vec::with_capacity(connectors.len());
 
-    for connector in connectors.iter() {
-        let connector_id = connector.connector.id();
+    for session_connector_data in connectors.iter() {
+        let connector_id = session_connector_data.connector.connector.id();
+
         let router_data = payment_data
             .construct_router_data(state, connector_id, merchant_account, customer)
             .await?;
 
         let res = router_data.decide_flows(
             state,
-            connector,
+            &session_connector_data.connector,
             customer,
             CallConnectorAction::Trigger,
             merchant_account,
@@ -584,8 +579,8 @@ where
 
     let result = join_all(join_handlers).await;
 
-    for (connector_res, connector) in result.into_iter().zip(connectors) {
-        let connector_name = connector.connector_name.to_string();
+    for (connector_res, session_connector) in result.into_iter().zip(connectors) {
+        let connector_name = session_connector.connector.connector_name.to_string();
         match connector_res {
             Ok(connector_response) => {
                 if let Ok(types::PaymentsResponseData::SessionResponse { session_token }) =
@@ -612,7 +607,7 @@ where
     Ok(payment_data)
 }
 
-pub async fn call_create_connector_customer<F, Req>(
+pub async fn call_create_connector_customer_if_required<F, Req>(
     state: &AppState,
     connector_name: &Option<String>,
     customer: &Option<storage::Customer>,
@@ -640,14 +635,31 @@ where
                 connector_name,
                 api::GetToken::Connector,
             )?;
-            let router_data = payment_data
-                .construct_router_data(state, connector.connector.id(), merchant_account, customer)
-                .await?;
-            let (connector_customer, customer_update) = router_data
-                .create_connector_customer(state, &connector, customer)
-                .await?;
-            payment_data.connector_customer_id = connector_customer;
-            Ok(customer_update)
+            let (is_eligible, connector_customer_id, connector_customer_map) =
+                customers::should_call_connector_create_customer(state, &connector, customer)?;
+
+            if is_eligible {
+                // Create customer at connector and update the customer table to store this data
+                let router_data = payment_data
+                    .construct_router_data(
+                        state,
+                        connector.connector.id(),
+                        merchant_account,
+                        customer,
+                    )
+                    .await?;
+
+                let (connector_customer, customer_update) = router_data
+                    .create_connector_customer(state, &connector, connector_customer_map)
+                    .await?;
+
+                payment_data.connector_customer_id = connector_customer;
+                Ok(customer_update)
+            } else {
+                // Customer already created in previous calls use the same value, no need to update
+                payment_data.connector_customer_id = connector_customer_id;
+                Ok(None)
+            }
         }
         None => Ok(None),
     }
@@ -754,10 +766,18 @@ where
 {
     let connector = payment_data.payment_attempt.connector.to_owned();
 
+    let is_mandate = payment_data
+        .mandate_id
+        .as_ref()
+        .and_then(|inner| inner.mandate_reference_id.as_ref())
+        .map(|mandate_reference| match mandate_reference {
+            api_models::payments::MandateReferenceId::ConnectorMandateId(_) => true,
+            api_models::payments::MandateReferenceId::NetworkMandateId(_) => false,
+        })
+        .unwrap_or(false);
+
     let payment_data_and_tokenization_action = match connector {
-        Some(_) if payment_data.mandate_id.is_some() => {
-            (payment_data, TokenizationAction::SkipConnectorTokenization)
-        }
+        Some(_) if is_mandate => (payment_data, TokenizationAction::SkipConnectorTokenization),
         Some(connector) if is_operation_confirm(&operation) => {
             let payment_method = &payment_data
                 .payment_attempt
@@ -860,12 +880,14 @@ where
     pub force_sync: Option<bool>,
     pub payment_method_data: Option<api::PaymentMethodData>,
     pub refunds: Vec<storage::Refund>,
+    pub disputes: Vec<storage::Dispute>,
     pub sessions_token: Vec<api::SessionToken>,
     pub card_cvc: Option<Secret<String>>,
     pub email: Option<Email>,
     pub creds_identifier: Option<String>,
     pub pm_token: Option<String>,
     pub connector_customer_id: Option<String>,
+    pub ephemeral_key: Option<ephemeral_key::EphemeralKey>,
 }
 
 #[derive(Debug, Default)]
@@ -1066,18 +1088,13 @@ where
 {
     let connector_choice = operation
         .to_domain()?
-        .get_connector(merchant_account, state, req)
+        .get_connector(merchant_account, state, req, &payment_data.payment_intent)
         .await?;
 
     let connector = if should_call_connector(operation, payment_data) {
         Some(match connector_choice {
             api::ConnectorChoice::SessionMultiple(session_connectors) => {
-                api::ConnectorCallType::Multiple(
-                    session_connectors
-                        .into_iter()
-                        .map(|c| c.connector)
-                        .collect(),
-                )
+                api::ConnectorCallType::Multiple(session_connectors)
             }
 
             api::ConnectorChoice::StraightThrough(straight_through) => connector_selection(
@@ -1112,6 +1129,18 @@ pub fn connector_selection<F>(
 where
     F: Send + Clone,
 {
+    if let Some(ref connector_name) = payment_data.payment_attempt.connector {
+        let connector_data = api::ConnectorData::get_connector_by_name(
+            &state.conf.connectors,
+            connector_name,
+            api::GetToken::Connector,
+        )
+        .change_context(errors::ApiErrorResponse::InternalServerError)
+        .attach_printable("invalid connector name received in payment attempt")?;
+
+        return Ok(api::ConnectorCallType::Single(connector_data));
+    }
+
     let mut routing_data = storage::RoutingData {
         routed_through: payment_data.payment_attempt.connector.clone(),
         algorithm: payment_data

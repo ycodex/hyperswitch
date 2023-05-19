@@ -1,7 +1,9 @@
 use std::{fmt::Debug, marker::PhantomData};
 
+use common_utils::fp_utils;
 use error_stack::{IntoReport, ResultExt};
 use router_env::{instrument, tracing};
+use storage_models::ephemeral_key;
 
 use super::{flows::Feature, PaymentAddress, PaymentData};
 use crate::{
@@ -51,6 +53,10 @@ where
         payment_data.creds_identifier.to_owned(),
     )
     .await?;
+
+    fp_utils::when(merchant_connector_account.is_disabled(), || {
+        Err(errors::ApiErrorResponse::MerchantConnectorAccountDisabled)
+    })?;
 
     let auth_type: types::ConnectorAuthType = merchant_connector_account
         .get_connector_account_details()
@@ -151,6 +157,7 @@ where
             payment_data.payment_attempt,
             payment_data.payment_intent,
             payment_data.refunds,
+            payment_data.disputes,
             payment_data.payment_method_data,
             customer,
             auth_flow,
@@ -158,6 +165,7 @@ where
             server,
             payment_data.connector_response.authentication_data,
             operation,
+            payment_data.ephemeral_key,
         )
     }
 }
@@ -240,6 +248,7 @@ pub fn payments_to_payments_response<R, Op>(
     payment_attempt: storage::PaymentAttempt,
     payment_intent: storage::PaymentIntent,
     refunds: Vec<storage::Refund>,
+    disputes: Vec<storage::Dispute>,
     payment_method_data: Option<api::PaymentMethodData>,
     customer: Option<storage::Customer>,
     auth_flow: services::AuthFlow,
@@ -247,6 +256,7 @@ pub fn payments_to_payments_response<R, Op>(
     server: &Server,
     redirection_data: Option<serde_json::Value>,
     operation: Op,
+    ephemeral_key_option: Option<ephemeral_key::EphemeralKey>,
 ) -> RouterResponse<api::PaymentsResponse>
 where
     Op: Debug,
@@ -265,6 +275,16 @@ where
         None
     } else {
         Some(refunds.into_iter().map(ForeignInto::foreign_into).collect())
+    };
+    let disputes_response = if disputes.is_empty() {
+        None
+    } else {
+        Some(
+            disputes
+                .into_iter()
+                .map(ForeignInto::foreign_into)
+                .collect(),
+        )
     };
 
     Ok(match payment_request {
@@ -346,6 +366,7 @@ where
                         .set_mandate_id(mandate_id)
                         .set_description(payment_intent.description)
                         .set_refunds(refunds_response) // refunds.iter().map(refund_to_refund_response),
+                        .set_disputes(disputes_response)
                         .set_payment_method(
                             payment_attempt
                                 .payment_method
@@ -400,6 +421,7 @@ where
                             parsed_metadata
                                 .and_then(|metadata| metadata.allowed_payment_method_types),
                         )
+                        .set_ephemeral_key(ephemeral_key_option.map(ForeignFrom::foreign_from))
                         .to_owned(),
                 )
             }
@@ -417,6 +439,7 @@ where
             customer_id: payment_intent.customer_id,
             description: payment_intent.description,
             refunds: refunds_response,
+            disputes: disputes_response,
             payment_method: payment_attempt
                 .payment_method
                 .map(ForeignInto::foreign_into),
@@ -470,6 +493,17 @@ impl ForeignFrom<(storage::PaymentIntent, storage::PaymentAttempt)> for api::Pay
     }
 }
 
+impl ForeignFrom<ephemeral_key::EphemeralKey> for api::ephemeral_key::EphemeralKeyCreateResponse {
+    fn foreign_from(from: ephemeral_key::EphemeralKey) -> Self {
+        Self {
+            customer_id: from.customer_id,
+            created_at: from.created_at,
+            expires: from.expires,
+            secret: from.secret,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct PaymentAdditionalData<'a, F>
 where
@@ -499,14 +533,14 @@ impl<F: Clone> TryFrom<PaymentAdditionalData<'_, F>> for types::PaymentsAuthoriz
 
         let parsed_metadata: Option<api_models::payments::Metadata> = payment_data
             .payment_intent
-            .metadata
+            .meta_data
             .map(|metadata_value| {
                 metadata_value
-                    .parse_value("metadata")
+                    .parse_value("meta_data")
                     .change_context(errors::ApiErrorResponse::InvalidDataValue {
-                        field_name: "metadata",
+                        field_name: "meta_data",
                     })
-                    .attach_printable("unable to parse metadata")
+                    .attach_printable("unable to parse meta_data")
             })
             .transpose()
             .unwrap_or_default();
@@ -519,7 +553,7 @@ impl<F: Clone> TryFrom<PaymentAdditionalData<'_, F>> for types::PaymentsAuthoriz
         ));
         let webhook_url = Some(helpers::create_webhook_url(
             router_base_url,
-            attempt,
+            &attempt.merchant_id,
             connector_name,
         ));
         let router_return_url = Some(helpers::create_redirect_url(
@@ -570,6 +604,7 @@ impl<F: Clone> TryFrom<PaymentAdditionalData<'_, F>> for types::PaymentsSyncData
     fn try_from(additional_data: PaymentAdditionalData<'_, F>) -> Result<Self, Self::Error> {
         let payment_data = additional_data.payment_data;
         Ok(Self {
+            mandate_id: payment_data.mandate_id.clone(),
             connector_transaction_id: match payment_data.payment_attempt.connector_transaction_id {
                 Some(connector_txn_id) => {
                     types::ResponseId::ConnectorTransactionId(connector_txn_id)
@@ -668,14 +703,14 @@ impl<F: Clone> TryFrom<PaymentAdditionalData<'_, F>> for types::PaymentsSessionD
         let payment_data = additional_data.payment_data;
         let parsed_metadata: Option<api_models::payments::Metadata> = payment_data
             .payment_intent
-            .metadata
+            .meta_data
             .map(|metadata_value| {
                 metadata_value
-                    .parse_value("metadata")
+                    .parse_value("meta_data")
                     .change_context(errors::ApiErrorResponse::InvalidDataValue {
-                        field_name: "metadata",
+                        field_name: "meta_data",
                     })
-                    .attach_printable("unable to parse metadata")
+                    .attach_printable("unable to parse meta_data")
             })
             .transpose()
             .unwrap_or_default();
@@ -698,6 +733,15 @@ impl<F: Clone> TryFrom<PaymentAdditionalData<'_, F>> for types::VerifyRequestDat
 
     fn try_from(additional_data: PaymentAdditionalData<'_, F>) -> Result<Self, Self::Error> {
         let payment_data = additional_data.payment_data;
+        let router_base_url = &additional_data.router_base_url;
+        let connector_name = &additional_data.connector_name;
+        let attempt = &payment_data.payment_attempt;
+        let router_return_url = Some(helpers::create_redirect_url(
+            router_base_url,
+            attempt,
+            connector_name,
+            payment_data.creds_identifier.as_deref(),
+        ));
         Ok(Self {
             currency: payment_data.currency,
             confirm: true,
@@ -709,6 +753,7 @@ impl<F: Clone> TryFrom<PaymentAdditionalData<'_, F>> for types::VerifyRequestDat
             off_session: payment_data.mandate_id.as_ref().map(|_| true),
             mandate_id: payment_data.mandate_id.clone(),
             setup_mandate_details: payment_data.setup_mandate,
+            router_return_url,
             email: payment_data.email,
             return_url: payment_data.payment_intent.return_url,
         })

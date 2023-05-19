@@ -12,7 +12,7 @@ use std::{
 use actix_web::{body, HttpRequest, HttpResponse, Responder};
 use common_utils::errors::ReportSwitchExt;
 use error_stack::{report, IntoReport, Report, ResultExt};
-use masking::{ExposeInterface, ExposeOptionInterface, PeekInterface};
+use masking::{ExposeOptionInterface, PeekInterface};
 use router_env::{instrument, tracing, Tag};
 use serde::Serialize;
 use serde_json::json;
@@ -287,7 +287,7 @@ pub async fn call_connector_api(
 ) -> CustomResult<Result<types::Response, types::Response>, errors::ApiClientError> {
     let current_time = Instant::now();
 
-    let response = send_request(state, request).await;
+    let response = send_request(state, request, None).await;
 
     let elapsed_time = current_time.elapsed();
     logger::info!(request_time=?elapsed_time);
@@ -296,12 +296,17 @@ pub async fn call_connector_api(
 }
 
 #[instrument(skip_all)]
-async fn send_request(
+pub async fn send_request(
     state: &AppState,
     request: Request,
+    option_timeout_secs: Option<u64>,
 ) -> CustomResult<reqwest::Response, errors::ApiClientError> {
     logger::debug!(method=?request.method, headers=?request.headers, payload=?request.payload, ?request);
     let url = &request.url;
+    #[cfg(feature = "dummy_connector")]
+    let should_bypass_proxy = url.starts_with(&state.conf.connectors.dummyconnector.base_url)
+        || client::proxy_bypass_urls(&state.conf.locker).contains(url);
+    #[cfg(not(feature = "dummy_connector"))]
     let should_bypass_proxy = client::proxy_bypass_urls(&state.conf.locker).contains(url);
     let client = client::create_client(
         &state.conf.proxy,
@@ -356,7 +361,9 @@ async fn send_request(
         Method::Delete => client.delete(url),
     }
     .add_headers(headers)
-    .timeout(Duration::from_secs(crate::consts::REQUEST_TIME_OUT))
+    .timeout(Duration::from_secs(
+        option_timeout_secs.unwrap_or(crate::consts::REQUEST_TIME_OUT),
+    ))
     .send()
     .await
     .map_err(|error| match error {
@@ -630,9 +637,45 @@ where
 pub fn log_and_return_error_response<T>(error: Report<T>) -> HttpResponse
 where
     T: actix_web::ResponseError + error_stack::Context + Clone,
+    Report<T>: EmbedError,
 {
     logger::error!(?error);
-    HttpResponse::from_error(error.current_context().clone())
+    HttpResponse::from_error(error.embed().current_context().clone())
+}
+
+pub trait EmbedError: Sized {
+    fn embed(self) -> Self {
+        self
+    }
+}
+
+impl EmbedError for Report<api_models::errors::types::ApiErrorResponse> {
+    fn embed(self) -> Self {
+        #[cfg(feature = "detailed_errors")]
+        {
+            let mut report = self;
+            let error_trace = serde_json::to_value(&report).ok().and_then(|inner| {
+                serde_json::from_value::<Vec<errors::NestedErrorStack<'_>>>(inner)
+                    .ok()
+                    .map(Into::<errors::VecLinearErrorStack<'_>>::into)
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .ok()
+                    .flatten()
+            });
+
+            match report.downcast_mut::<api_models::errors::types::ApiErrorResponse>() {
+                None => {}
+                Some(inner) => {
+                    inner.get_internal_error_mut().stacktrace = error_trace;
+                }
+            }
+            report
+        }
+
+        #[cfg(not(feature = "detailed_errors"))]
+        self
+    }
 }
 
 pub fn http_response_json<T: body::MessageBody + 'static>(response: T) -> HttpResponse {
@@ -793,10 +836,10 @@ pub fn build_redirection_form(
             {
                 format!(
                     "var newCard={{ccNumber: \"{}\",cvv: \"{}\",expDate: \"{}/{}\",amount: {},currency: \"{}\"}};",
-                    ccard.card_number.expose(),
-                    ccard.card_cvc.expose(),
-                    ccard.card_exp_month.clone().expose(),
-                    ccard.card_exp_year.expose(),
+                    ccard.card_number.peek(),
+                    ccard.card_cvc.peek(),
+                    ccard.card_exp_month.peek(),
+                    ccard.card_exp_year.peek(),
                     amount,
                     currency
                 )
@@ -834,7 +877,7 @@ pub fn build_redirection_form(
                     }
 
                 (PreEscaped(format!("<script>
-                    bluesnap.threeDsPaymentsSetup(\"{payment_fields_token}\", 
+                    bluesnap.threeDsPaymentsSetup(\"{payment_fields_token}\",
                     function(sdkResponse) {{
                         console.log(sdkResponse);
                         var f = document.createElement('form');

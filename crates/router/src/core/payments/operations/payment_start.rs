@@ -136,11 +136,13 @@ impl<F: Send + Clone> GetTracker<F, PaymentData<F>, api::PaymentsStartRequest> f
                 payment_method_data: None,
                 force_sync: None,
                 refunds: vec![],
+                disputes: vec![],
                 sessions_token: vec![],
                 card_cvc: None,
                 creds_identifier: None,
                 pm_token: None,
                 connector_customer_id: None,
+                ephemeral_key: None,
             },
             Some(customer_details),
         ))
@@ -248,6 +250,7 @@ where
         _merchant_account: &storage::MerchantAccount,
         state: &AppState,
         _request: &api::PaymentsStartRequest,
+        _payment_intent: &storage::payment_intent::PaymentIntent,
     ) -> CustomResult<api::ConnectorChoice, errors::ApiErrorResponse> {
         helpers::get_connector_default(state, None).await
     }

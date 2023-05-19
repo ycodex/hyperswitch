@@ -86,6 +86,7 @@ pub struct MockDb {
     processes: Arc<Mutex<Vec<storage::ProcessTracker>>>,
     connector_response: Arc<Mutex<Vec<storage::ConnectorResponse>>>,
     redis: Arc<redis_interface::RedisConnectionPool>,
+    api_keys: Arc<Mutex<Vec<storage::ApiKey>>>,
 }
 
 impl MockDb {
@@ -100,6 +101,7 @@ impl MockDb {
             processes: Default::default(),
             connector_response: Default::default(),
             redis: Arc::new(crate::connection::redis_connection(redis).await),
+            api_keys: Default::default(),
         }
     }
 }
@@ -110,7 +112,7 @@ impl StorageInterface for MockDb {}
 pub async fn get_and_deserialize_key<T>(
     db: &dyn StorageInterface,
     key: &str,
-    type_name: &str,
+    type_name: &'static str,
 ) -> common_utils::errors::CustomResult<T, redis_interface::errors::RedisError>
 where
     T: serde::de::DeserializeOwned,

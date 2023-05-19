@@ -1,12 +1,15 @@
 use std::num::NonZeroI64;
 
+use cards::CardNumber;
 use common_utils::{pii, pii::Email};
 use masking::{PeekInterface, Secret};
 use router_derive::Setter;
 use time::PrimitiveDateTime;
 use utoipa::ToSchema;
 
-use crate::{admin, enums as api_enums, refunds};
+use crate::{
+    admin, disputes, enums as api_enums, ephemeral_key::EphemeralKeyCreateResponse, refunds,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PaymentOp {
@@ -218,6 +221,10 @@ pub struct PaymentsRequest {
 
     /// Business sub label for the payment
     pub business_sub_label: Option<String>,
+
+    /// If enabled payment can be retried from the client side until the payment is successful or payment expires or the attempts(configured by the merchant) for payment are exhausted.
+    #[serde(default)]
+    pub manual_retry: bool,
 }
 
 #[derive(Default, Debug, serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq)]
@@ -293,7 +300,8 @@ impl From<PaymentsRequest> for VerifyRequest {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MandateTxnType {
     NewMandateTxn,
     RecurringMandateTxn,
@@ -326,13 +334,15 @@ impl MandateIds {
     }
 }
 
+// The fields on this struct are optional, as we want to allow the merchant to provide partial
+// information about creating mandates
 #[derive(Default, Eq, PartialEq, Debug, serde::Deserialize, serde::Serialize, Clone, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MandateData {
     /// A concent from the customer to store the payment method
-    pub customer_acceptance: CustomerAcceptance,
+    pub customer_acceptance: Option<CustomerAcceptance>,
     /// A way to select the type of mandate used
-    pub mandate_type: MandateType,
+    pub mandate_type: Option<MandateType>,
 }
 
 #[derive(Clone, Eq, PartialEq, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -415,7 +425,7 @@ pub struct OnlineMandate {
 pub struct Card {
     /// The card number
     #[schema(value_type = String, example = "4242424242424242")]
-    pub card_number: Secret<String, pii::CardNumber>,
+    pub card_number: CardNumber,
 
     /// The card's expiry month
     #[schema(value_type = String, example = "24")]
@@ -487,6 +497,12 @@ pub enum BankDebitData {
         /// Routing number for ach bank debit payment
         #[schema(value_type = String, example = "110000000")]
         routing_number: Secret<String>,
+
+        #[schema(value_type = String, example = "John Test")]
+        card_holder_name: Option<Secret<String>>,
+
+        #[schema(value_type = String, example = "John Doe")]
+        bank_account_holder_name: Option<Secret<String>>,
     },
     SepaBankDebit {
         /// Billing details for bank debit
@@ -494,6 +510,9 @@ pub enum BankDebitData {
         /// International bank account number (iban) for SEPA
         #[schema(value_type = String, example = "DE89370400440532013000")]
         iban: Secret<String>,
+        /// Owner name for bank debit
+        #[schema(value_type = String, example = "A. Schneider")]
+        bank_account_holder_name: Option<Secret<String>>,
     },
     BecsBankDebit {
         /// Billing details for bank debit
@@ -514,6 +533,9 @@ pub enum BankDebitData {
         /// Sort code for Bacs payment method
         #[schema(value_type = String, example = "108800")]
         sort_code: Secret<String>,
+        /// holder name for bank debit
+        #[schema(value_type = String, example = "A. Schneider")]
+        bank_account_holder_name: Option<Secret<String>>,
     },
 }
 
@@ -580,18 +602,21 @@ pub enum BankRedirectData {
     BancontactCard {
         /// The card number
         #[schema(value_type = String, example = "4242424242424242")]
-        card_number: Secret<String, pii::CardNumber>,
+        card_number: Option<CardNumber>,
         /// The card's expiry month
         #[schema(value_type = String, example = "24")]
-        card_exp_month: Secret<String>,
+        card_exp_month: Option<Secret<String>>,
 
         /// The card's expiry year
         #[schema(value_type = String, example = "24")]
-        card_exp_year: Secret<String>,
+        card_exp_year: Option<Secret<String>>,
 
         /// The card holder's name
         #[schema(value_type = String, example = "John Test")]
-        card_holder_name: Secret<String>,
+        card_holder_name: Option<Secret<String>>,
+
+        //Required by Stripes
+        billing_details: Option<BankRedirectBilling>,
     },
     Blik {
         // Blik Code
@@ -620,6 +645,13 @@ pub enum BankRedirectData {
         #[schema(value_type = BankNames, example = "abn_amro")]
         bank_name: api_enums::BankNames,
     },
+    Interac {
+        /// The country for bank payment
+        #[schema(value_type = CountryAlpha2, example = "US")]
+        country: api_enums::CountryAlpha2,
+
+        email: Email,
+    },
     OnlineBankingCzechRepublic {
         // Issuer banks
         issuer: api_enums::BankNames,
@@ -636,7 +668,13 @@ pub enum BankRedirectData {
         // Issuer value corresponds to the bank
         issuer: api_enums::BankNames,
     },
-    Przelewy24 {},
+    Przelewy24 {
+        //Issuer banks
+        bank_name: Option<api_enums::BankNames>,
+
+        // The billing details for bank redirect
+        billing_details: BankRedirectBilling,
+    },
     Sofort {
         /// The billing details for bank redirection
         billing_details: BankRedirectBilling,
@@ -650,7 +688,11 @@ pub enum BankRedirectData {
         preferred_language: String,
     },
     Swish {},
-    Trustly {},
+    Trustly {
+        /// The country for bank payment
+        #[schema(value_type = CountryAlpha2, example = "US")]
+        country: api_enums::CountryAlpha2,
+    },
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, serde::Deserialize, serde::Serialize, ToSchema)]
@@ -668,7 +710,10 @@ pub struct SofortBilling {
 pub struct BankRedirectBilling {
     /// The name for which billing is issued
     #[schema(value_type = String, example = "John Doe")]
-    pub billing_name: Secret<String>,
+    pub billing_name: Option<Secret<String>>,
+    /// The billing email for bank redirect
+    #[schema(value_type = String, example = "example@example.com")]
+    pub email: Option<Email>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone, ToSchema, Eq, PartialEq)]
@@ -704,7 +749,7 @@ pub enum WalletData {
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, serde::Deserialize, serde::Serialize, ToSchema)]
-#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+#[serde(rename_all = "snake_case")]
 pub struct GooglePayWalletData {
     /// The type of payment method
     #[serde(rename = "type")]
@@ -736,7 +781,7 @@ pub struct MbWayRedirection {
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, serde::Deserialize, serde::Serialize, ToSchema)]
-#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+#[serde(rename_all = "snake_case")]
 pub struct GooglePayPaymentMethodInfo {
     /// The name of the card network
     pub card_network: String,
@@ -925,7 +970,7 @@ pub struct PhoneDetails {
     pub country_code: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Eq, PartialEq, serde::Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize, ToSchema)]
 pub struct PaymentsCaptureRequest {
     /// The unique identifier for the payment
     pub payment_id: Option<String>,
@@ -1030,6 +1075,10 @@ pub struct PaymentsResponse {
     /// List of refund that happened on this intent
     #[schema(value_type = Option<Vec<RefundResponse>>)]
     pub refunds: Option<Vec<refunds::RefundResponse>>,
+
+    /// List of dispute that happened on this intent
+    #[schema(value_type = Option<Vec<DisputeResponsePaymentsRetrieve>>)]
+    pub disputes: Option<Vec<disputes::DisputeResponsePaymentsRetrieve>>,
 
     /// A unique identifier to link the payment to a mandate, can be use instead of payment_method_data
     #[schema(max_length = 255, example = "mandate_iwer89rnjef349dni3")]
@@ -1146,6 +1195,9 @@ pub struct PaymentsResponse {
     /// Allowed Payment Method Types for a given PaymentIntent
     #[schema(value_type = Option<Vec<PaymentMethodType>>)]
     pub allowed_payment_method_types: Option<Vec<api_enums::PaymentMethodType>>,
+
+    /// ephemeral_key for the customer_id mentioned
+    pub ephemeral_key: Option<EphemeralKeyCreateResponse>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, ToSchema)]
@@ -1396,12 +1448,14 @@ pub struct OrderDetails {
     /// The quantity of the product to be purchased
     #[schema(example = 1)]
     pub quantity: u16,
+    /// the amount per quantity of product
+    pub amount: i64,
 }
 
 #[derive(Default, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize, Clone, ToSchema)]
 pub struct Metadata {
     /// Information about the product and quantity for specific connectors. (e.g. Klarna)
-    pub order_details: Option<OrderDetails>,
+    pub order_details: Option<Vec<OrderDetails>>,
     /// Any other metadata that is to be provided
     #[schema(value_type = Object, example = r#"{ "city": "NY", "unit": "245" }"#)]
     #[serde(flatten)]
@@ -1440,7 +1494,15 @@ pub struct GpayTokenParameters {
     /// The name of the connector
     pub gateway: String,
     /// The merchant ID registered in the connector associated
-    pub gateway_merchant_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gateway_merchant_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "stripe:version")]
+    pub stripe_version: Option<String>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "stripe:publishableKey"
+    )]
+    pub stripe_publishable_key: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema)]
@@ -1473,7 +1535,7 @@ pub struct GpayTransactionInfo {
     /// The total price status (ex: 'FINAL')
     pub total_price_status: String,
     /// The total price
-    pub total_price: i64,
+    pub total_price: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema)]

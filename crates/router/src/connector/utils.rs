@@ -163,13 +163,15 @@ pub trait PaymentsAuthorizeRequestData {
     fn is_auto_capture(&self) -> Result<bool, Error>;
     fn get_email(&self) -> Result<Email, Error>;
     fn get_browser_info(&self) -> Result<types::BrowserInformation, Error>;
-    fn get_order_details(&self) -> Result<OrderDetails, Error>;
+    fn get_order_details(&self) -> Result<Vec<OrderDetails>, Error>;
     fn get_card(&self) -> Result<api::Card, Error>;
     fn get_return_url(&self) -> Result<String, Error>;
     fn connector_mandate_id(&self) -> Option<String>;
     fn is_mandate_payment(&self) -> bool;
     fn get_webhook_url(&self) -> Result<String, Error>;
     fn get_router_return_url(&self) -> Result<String, Error>;
+    fn is_wallet(&self) -> bool;
+    fn get_payment_method_type(&self) -> Result<storage_models::enums::PaymentMethodType, Error>;
 }
 
 impl PaymentsAuthorizeRequestData for types::PaymentsAuthorizeData {
@@ -188,7 +190,7 @@ impl PaymentsAuthorizeRequestData for types::PaymentsAuthorizeData {
             .clone()
             .ok_or_else(missing_field_err("browser_info"))
     }
-    fn get_order_details(&self) -> Result<OrderDetails, Error> {
+    fn get_order_details(&self) -> Result<Vec<OrderDetails>, Error> {
         self.order_details
             .clone()
             .ok_or_else(missing_field_err("order_details"))
@@ -232,6 +234,15 @@ impl PaymentsAuthorizeRequestData for types::PaymentsAuthorizeData {
         self.router_return_url
             .clone()
             .ok_or_else(missing_field_err("webhook_url"))
+    }
+    fn is_wallet(&self) -> bool {
+        matches!(self.payment_method_data, api::PaymentMethodData::Wallet(_))
+    }
+
+    fn get_payment_method_type(&self) -> Result<storage_models::enums::PaymentMethodType, Error> {
+        self.payment_method_type
+            .to_owned()
+            .ok_or_else(missing_field_err("payment_method_type"))
     }
 }
 
@@ -307,6 +318,7 @@ impl PaymentsCancelRequestData for PaymentsCancelData {
 
 pub trait RefundsRequestData {
     fn get_connector_refund_id(&self) -> Result<String, Error>;
+    fn get_webhook_url(&self) -> Result<String, Error>;
 }
 
 impl RefundsRequestData for types::RefundsData {
@@ -316,6 +328,52 @@ impl RefundsRequestData for types::RefundsData {
             .clone()
             .get_required_value("connector_refund_id")
             .change_context(errors::ConnectorError::MissingConnectorTransactionID)
+    }
+    fn get_webhook_url(&self) -> Result<String, Error> {
+        self.webhook_url
+            .clone()
+            .ok_or_else(missing_field_err("webhook_url"))
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GooglePayWalletData {
+    #[serde(rename = "type")]
+    pub pm_type: String,
+    pub description: String,
+    pub info: GooglePayPaymentMethodInfo,
+    pub tokenization_data: GpayTokenizationData,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GooglePayPaymentMethodInfo {
+    pub card_network: String,
+    pub card_details: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct GpayTokenizationData {
+    #[serde(rename = "type")]
+    pub token_type: String,
+    pub token: String,
+}
+
+impl From<api_models::payments::GooglePayWalletData> for GooglePayWalletData {
+    fn from(data: api_models::payments::GooglePayWalletData) -> Self {
+        Self {
+            pm_type: data.pm_type,
+            description: data.description,
+            info: GooglePayPaymentMethodInfo {
+                card_network: data.info.card_network,
+                card_details: data.info.card_details,
+            },
+            tokenization_data: GpayTokenizationData {
+                token_type: data.tokenization_data.token_type,
+                token: data.tokenization_data.token,
+            },
+        }
     }
 }
 
@@ -370,11 +428,7 @@ impl CardData for api::Card {
         Secret::new(year[year.len() - 2..].to_string())
     }
     fn get_card_issuer(&self) -> Result<CardIssuer, Error> {
-        let card: Secret<String, pii::CardNumber> = self
-            .card_number
-            .clone()
-            .map(|card| card.split_whitespace().collect());
-        get_card_issuer(card.peek().clone().as_str())
+        get_card_issuer(self.card_number.peek())
     }
     fn get_card_expiry_month_year_2_digit_with_delimiter(
         &self,
